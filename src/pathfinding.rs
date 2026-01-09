@@ -144,4 +144,28 @@ mod tests {
         let path = find_path(&nodes, 0, 1);
         assert!(path.is_none());
     }
+
+    #[test]
+    fn test_dijkstra_shortest_path() {
+        // Diamond shape:
+        //      1 (Low Cost)
+        //    /   \
+        // S(0)    E(3)
+        //    \   /
+        //      2 (High Cost - Further away)
+
+        // 0.1 deg ~ 11km.
+        let nodes = vec![
+            Repeater { id: "00".into(), name: "S".into(), lat: 0.0, lon: 0.0 },
+            Repeater { id: "01".into(), name: "1".into(), lat: 0.05, lon: 0.05 }, // Path 1: ~15km total
+            Repeater { id: "02".into(), name: "2".into(), lat: 0.5, lon: 0.5 },   // Path 2: ~150km total
+            Repeater { id: "03".into(), name: "E".into(), lat: 0.1, lon: 0.1 },
+        ];
+
+        // Path via 1: 0->1->3. Distances are small. Cost is low.
+        // Path via 2: 0->2->3. Distances are large. Cost is high.
+
+        let path = find_path(&nodes, 0, 3).expect("Path should exist");
+        assert_eq!(path, vec![0, 1, 3]);
+    }
 }
