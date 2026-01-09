@@ -68,6 +68,7 @@ pub fn find_path(nodes: &[Repeater], start_idx: usize, end_idx: usize) -> Option
                 current_node.lon,
                 neighbor.lat,
                 neighbor.lon,
+                None,
             );
 
             if edge_cost.is_infinite() || edge_cost > 500.0 {

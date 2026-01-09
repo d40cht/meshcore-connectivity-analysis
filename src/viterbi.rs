@@ -24,9 +24,10 @@ const UNKNOWN_LINK_COST: f64 = 8.0;
 ///
 /// * `nodes`: The full list of known repeaters.
 /// * `observations`: The sequence of 1-byte prefixes (u8) observed in the packet header.
+/// * `terrain`: Optional terrain map for cost calculation.
 ///
 /// Returns the most likely sequence of PathNodes.
-pub fn decode_path(nodes: &[Repeater], observations: &[u8]) -> Result<Vec<PathNode>> {
+pub fn decode_path(nodes: &[Repeater], observations: &[u8], terrain: Option<&crate::terrain::TerrainMap>) -> Result<Vec<PathNode>> {
     if observations.is_empty() {
         return Ok(Vec::new());
     }
@@ -91,7 +92,7 @@ pub fn decode_path(nodes: &[Repeater], observations: &[u8]) -> Result<Vec<PathNo
                     // Known -> Known
                     let node_prev = &nodes[prev_state];
                     let node_curr = &nodes[curr_state];
-                    link_cost(node_prev.lat, node_prev.lon, node_curr.lat, node_curr.lon)
+                    link_cost(node_prev.lat, node_prev.lon, node_curr.lat, node_curr.lon, terrain)
                 } else {
                     // Involves Unknown: Fixed penalty
                     UNKNOWN_LINK_COST
@@ -188,7 +189,7 @@ mod tests {
         // Observations: A0, B0, C0
         let obs = vec![0xA0, 0xB0, 0xC0];
 
-        let result = decode_path(&nodes, &obs).expect("Viterbi failed");
+        let result = decode_path(&nodes, &obs, None).expect("Viterbi failed");
 
         assert_eq!(result.len(), 3);
         assert_eq!(result[0], PathNode::Known(0)); // Node A
@@ -205,7 +206,7 @@ mod tests {
 
         let obs = vec![0xA0, 0xB0, 0xB1, 0xC0];
 
-        let result = decode_path(&nodes, &obs).expect("Viterbi failed");
+        let result = decode_path(&nodes, &obs, None).expect("Viterbi failed");
 
         assert_eq!(result.len(), 4);
         assert_eq!(result[0], PathNode::Known(0));
@@ -230,7 +231,7 @@ mod tests {
         // Observations: A0, B0, C0
         let obs = vec![0xA0, 0xB0, 0xC0];
 
-        let result = decode_path(&nodes, &obs).expect("Viterbi failed");
+        let result = decode_path(&nodes, &obs, None).expect("Viterbi failed");
 
         // Should pick A -> Unknown(B0) -> C
         // Not A -> D0 -> C (impossible due to emission)
@@ -257,7 +258,7 @@ mod tests {
 
         let obs = vec![0xA0, 0xB0, 0xC0];
 
-        let result = decode_path(&nodes, &obs).expect("Viterbi failed");
+        let result = decode_path(&nodes, &obs, None).expect("Viterbi failed");
 
         assert_eq!(result.len(), 3);
         assert_eq!(result[0], PathNode::Known(0));

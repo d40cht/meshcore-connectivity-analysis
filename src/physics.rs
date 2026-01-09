@@ -40,8 +40,23 @@ pub fn earth_bulge(distance_km: f64) -> f64 {
 /// For this simulation:
 /// - Max realistic range: ~100km
 /// - Antenna height assumption: ~30m. If bulge > 30m, probability drops sharply.
-pub fn link_cost(lat1: f64, lon1: f64, lat2: f64, lon2: f64) -> f64 {
+pub fn link_cost(lat1: f64, lon1: f64, lat2: f64, lon2: f64, terrain: Option<&crate::terrain::TerrainMap>) -> f64 {
     let dist_km = haversine_distance(lat1, lon1, lat2, lon2);
+
+    // Terrain Check
+    if let Some(map) = terrain {
+        // Assume 30m antenna height for both
+        if !map.check_line_of_sight(lat1, lon1, 30.0, lat2, lon2, 30.0) {
+            // Blocked by terrain!
+            // Add a massive penalty. e.g. +30.0 in log-space (e^-30 is tiny)
+            // Existing max cost is around 1000.0 (from 1e-10).
+            // Let's return a very high cost that isn't INFINITY but effectively rules it out
+            // unless there are NO other options.
+            // But if it's blocked, it's physically impossible in this model.
+            // Let's add 50.0 to the calculated cost or just return High.
+            return 2000.0;
+        }
+    }
 
     // Hard cutoff for performance/reality
     if dist_km > 150.0 {
@@ -91,14 +106,14 @@ mod tests {
     #[test]
     fn test_link_cost() {
         // Short distance -> Low cost
-        let c_short = link_cost(51.50, 0.0, 51.51, 0.0); // ~1km
+        let c_short = link_cost(51.50, 0.0, 51.51, 0.0, None); // ~1km
         // Long distance -> High cost
-        let c_long = link_cost(51.50, 0.0, 52.50, 0.0); // ~111km
+        let c_long = link_cost(51.50, 0.0, 52.50, 0.0, None); // ~111km
 
         assert!(c_short < c_long);
 
         // Very long -> Infinity (or very high)
-        let c_very_long = link_cost(51.50, 0.0, 55.00, 0.0); // ~300km
+        let c_very_long = link_cost(51.50, 0.0, 55.00, 0.0, None); // ~300km
         assert!(c_very_long == f64::INFINITY || c_very_long > 500.0);
     }
 }
