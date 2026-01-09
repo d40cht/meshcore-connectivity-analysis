@@ -3,6 +3,7 @@ use app::pathfinding::find_path;
 use app::physics;
 use app::test_utils::generate_dummy_nodes;
 use app::viterbi::{PathNode, decode_path};
+use app::terrain::TerrainMap;
 
 fn find_node_idx(nodes: &[Repeater], id: &str) -> Option<usize> {
     nodes.iter().position(|n| n.id == id)
@@ -34,7 +35,7 @@ fn verify_path_reconstruction(nodes: &[Repeater], ground_truth_indices: &[usize]
         .collect();
 
     // 2. Run Viterbi
-    let reconstructed_path = decode_path(nodes, &prefixes).expect("Viterbi failed to decode path");
+    let reconstructed_path = decode_path(nodes, &prefixes, None).expect("Viterbi failed to decode path");
 
     // 3. Verify
     // Convert reconstructed path (Vec<PathNode>) to indices (Vec<usize>) for comparison
@@ -204,5 +205,143 @@ fn test_complex_multipath() {
         verify_path_reconstruction(&nodes, &path);
     } else {
         panic!("No path found for complex multipath test");
+    }
+}
+
+#[test]
+fn test_viterbi_with_terrain() {
+    // Create a terrain map where there is a "mountain" in the middle
+    // but a clear path around it.
+
+    let center_lat = 0.0;
+    let center_lon = 0.0;
+    // Small map 50x50km
+    let mut map = TerrainMap::new_random(center_lat, center_lon, 50.0, 50.0, 30.0);
+
+    // FLATTEN the map first to avoid random noise blocking the path
+    for i in 0..map.data.len() {
+        map.data[i] = 0.0;
+    }
+
+    // MANUALLY inject a mountain wall at x=0 (approx lon=0).
+    // The map data is row-major.
+    // Let's create a wall along the vertical center line to block direct LOS.
+    let mid_col = map.width / 2;
+    for r in 0..map.height {
+        // Make it 1000m high
+        map.data[r * map.width + mid_col] = 1000.0;
+        // Make it wide enough to block adjacent rays (approx 1km wide)
+        for offset in 1..20 {
+            if mid_col + offset < map.width { map.data[r * map.width + mid_col + offset] = 1000.0; }
+            if mid_col >= offset { map.data[r * map.width + mid_col - offset] = 1000.0; }
+        }
+    }
+
+    // However, leave a "gap" (pass) at the top.
+    // Let's clear the top 10% of rows.
+    for r in 0..(map.height / 10) {
+            for offset in 0..20 {
+                if mid_col + offset < map.width { map.data[r * map.width + mid_col + offset] = 0.0; }
+                if mid_col >= offset { map.data[r * map.width + mid_col - offset] = 0.0; }
+            }
+    }
+
+    // Setup Nodes
+    // Start Node (West)
+    let start = Repeater {
+        id: "A00000".to_string(),
+        name: "Start".to_string(),
+        lat: 0.0,
+        lon: -0.2, // ~22km West of center
+    };
+
+    // End Node (East)
+    let end = Repeater {
+        id: "C00000".to_string(),
+        name: "End".to_string(),
+        lat: 0.0,
+        lon: 0.2, // ~22km East of center
+    };
+
+    // Candidate Middle Nodes
+    // 1. Direct path node (Behind the mountain wall from A)
+    // Wall is at lon=0.0. Place this node at +0.1.
+    // Path A(-0.2) -> B_blocked(+0.1) must cross wall at 0.0.
+    let mid_blocked = Repeater {
+        id: "B10000".to_string(),
+        name: "Blocked".to_string(),
+        lat: 0.0,
+        lon: 0.1,
+    };
+
+    // 2. Detour path node (Through the gap at the top)
+    // Map height is 50km. Top is +0.22 deg approx.
+    let gap_lat = map.min_lat + 0.02; // Use TOP or BOTTOM. The loop cleared rows 0..height/10. Row 0 is min_lat.
+    // Row 0 is at min_lat. My loop cleared 0..height/10.
+    // So the GAP is at the BOTTOM (South).
+    let mid_detour = Repeater {
+        id: "B20000".to_string(),
+        name: "Detour".to_string(),
+        lat: gap_lat,
+        lon: 0.0, // Center lon, but at South gap
+    };
+
+    // All nodes
+    let nodes = vec![start.clone(), end.clone(), mid_blocked.clone(), mid_detour.clone()];
+
+    // Observations: A0 -> B? -> C0
+    // We observe prefix B1 (Blocked) and B2 (Detour) or maybe just B?
+    // Let's say we observe A0, B?, C0.
+    // If we observe "B1", but B1 is blocked, does Viterbi pick it?
+    // If B1 is blocked, cost is huge.
+    // If B2 is clear, cost is normal.
+
+    // Case 1: Packet header says [A0, B2, C0].
+    // Should be easy, B2 is valid.
+    let obs_easy = vec![0xA0, 0xB2, 0xC0];
+    let path_easy = decode_path(&nodes, &obs_easy, Some(&map)).unwrap();
+    // Should contain index 3 (Detour)
+    if let PathNode::Known(idx) = path_easy[1] {
+        assert_eq!(idx, 3, "Should pick Detour node");
+    } else {
+        panic!("Should be known node");
+    }
+
+    // Case 2: Packet header says [A0, B1, C0].
+    // B1 is blocked.
+    // Viterbi should return path with B1 but with VERY high cost, OR fail if we set cost to infinity?
+    // Our implementation sets cost to 2000.0 (very high) but not infinity.
+    // So it should still return it, but if we had an alternative unknown path, it might prefer that.
+    // Let's see if we can force it to pick an "Unknown" node instead if we provide a wildcard.
+
+    // Case 3: Ambiguous prefix?
+    // Suppose both have prefix B0.
+    // B_blocked (B0), B_detour (B0).
+    // Obs: [A0, B0, C0].
+    // It should pick B_detour because B_blocked has high terrain cost.
+
+    let mid_blocked_b0 = Repeater {
+        id: "B00001".to_string(),
+        name: "Blocked_B0".to_string(),
+        lat: 0.0,
+        lon: 0.1,
+    };
+    let mid_detour_b0 = Repeater {
+        id: "B00002".to_string(),
+        name: "Detour_B0".to_string(),
+        lat: gap_lat,
+        lon: 0.0,
+    };
+
+    let nodes_ambiguous = vec![start.clone(), end.clone(), mid_blocked_b0, mid_detour_b0];
+    let obs_ambiguous = vec![0xA0, 0xB0, 0xC0];
+
+    let path_ambiguous = decode_path(&nodes_ambiguous, &obs_ambiguous, Some(&map)).unwrap();
+
+    if let PathNode::Known(idx) = path_ambiguous[1] {
+        // Indices: 0=Start, 1=End, 2=Blocked, 3=Detour
+        assert_eq!(idx, 3, "Should pick Detour node (index 3) over Blocked (index 2)");
+    } else {
+            panic!("Should be known node");
     }
 }

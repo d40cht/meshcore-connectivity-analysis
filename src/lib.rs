@@ -3,3 +3,4 @@ pub mod pathfinding;
 pub mod physics;
 pub mod test_utils;
 pub mod viterbi;
+pub mod terrain;
