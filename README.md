@@ -41,6 +41,7 @@ By finding the **Viterbi Path** (the sequence of nodes that minimizes total path
 * **Costing:** Give Ghost nodes a "Fixed Uncertainty Penalty" (e.g., equivalent to a -122dBm link).
 * **Selection:** If the Viterbi algorithm chooses a Ghost over all known repeaters (because the known ones are topographically blocked or too far), log this as a "Hidden Node Hit."
 * **Aggregation:** Collect all Ghost hits. If a specific prefix consistently appears between two known nodes across multiple messages, we have discovered a likely physical repeater.
+* **Testing**: Have a test where there is a path with a node id for a node that isn't in the database and where at that point in the path there aren't other feasible candidates with the same prefix. Make sure the path is able to be completed feasibly and that the ghost node is represented properly in the resultant returned path.
 
 ### Step 3.1: Topographic Refinement (Random data)
 **Goal:** Use terrain data to penalize "impossible" links through mountains or ridges.
