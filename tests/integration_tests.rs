@@ -103,3 +103,79 @@ fn test_global_clash_resolution() {
         panic!("No path found to global clash D");
     }
 }
+
+#[test]
+fn test_complex_multipath() {
+    // Manually construct a specific topology to ensure a path of at least 4 nodes.
+    // We create a chain: S -> A -> B -> C -> E
+    // Step size 0.4 degrees longitude at 51.0 latitude is approx 28km.
+    // 28km has low Earth Bulge (~16m vs 40m threshold) -> Low cost.
+    // 56km (skipping a node) has high Earth Bulge (~60m) -> High cost.
+    // This forces the pathfinder to visit every node in the chain.
+
+    let center_lat = 51.0;
+    let center_lon = 0.0;
+
+    let mut nodes = Vec::new();
+
+    // Start Node (Index 0)
+    nodes.push(Repeater {
+        id: "S00000".to_string(),
+        name: "Start".to_string(),
+        lat: center_lat,
+        lon: center_lon,
+    });
+
+    // Node A (Index 1)
+    nodes.push(Repeater {
+        id: "A00000".to_string(),
+        name: "Node_A".to_string(),
+        lat: center_lat,
+        lon: center_lon + 0.4,
+    });
+
+    // Node B (Index 2)
+    nodes.push(Repeater {
+        id: "B00000".to_string(),
+        name: "Node_B".to_string(),
+        lat: center_lat,
+        lon: center_lon + 0.8,
+    });
+
+    // Node C (Index 3)
+    nodes.push(Repeater {
+        id: "C00000".to_string(),
+        name: "Node_C".to_string(),
+        lat: center_lat,
+        lon: center_lon + 1.2,
+    });
+
+    // End Node (Index 4)
+    nodes.push(Repeater {
+        id: "E00000".to_string(),
+        name: "End".to_string(),
+        lat: center_lat,
+        lon: center_lon + 1.6,
+    });
+
+    let start_idx = 0;
+    let end_idx = 4;
+
+    if let Some(path) = find_path(&nodes, start_idx, end_idx) {
+        // Expected path: [0, 1, 2, 3, 4]
+        assert!(
+            path.len() >= 4,
+            "Path should be at least 4 nodes long, found length {}",
+            path.len()
+        );
+        assert_eq!(
+            path,
+            vec![0, 1, 2, 3, 4],
+            "Path did not follow the expected chain"
+        );
+
+        verify_path_reconstruction(&nodes, &path);
+    } else {
+        panic!("No path found for complex multipath test");
+    }
+}
