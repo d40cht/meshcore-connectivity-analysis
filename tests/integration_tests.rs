@@ -34,12 +34,13 @@ fn verify_path_reconstruction(nodes: &[Repeater], ground_truth_indices: &[usize]
         .collect();
 
     // 2. Run Viterbi
-    let reconstructed_indices = decode_path(nodes, &prefixes);
+    let reconstructed_indices =
+        decode_path(nodes, &prefixes).expect("Viterbi failed to decode path");
 
     // 3. Verify
     assert_eq!(
         reconstructed_indices, ground_truth_indices,
-        "Viterbi failed to reconstruct path"
+        "Viterbi reconstructed path does not match ground truth"
     );
 }
 

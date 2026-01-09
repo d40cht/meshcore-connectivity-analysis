@@ -89,3 +89,59 @@ pub fn find_path(nodes: &[Repeater], start_idx: usize, end_idx: usize) -> Option
 
     None
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_dijkstra_simple_path() {
+        // Create a simple line: Node 0 -> Node 1 -> Node 2
+        // Distances approx 10km (0.1 deg lat is ~11km)
+        let nodes = vec![
+            Repeater {
+                id: "000001".to_string(),
+                name: "A".to_string(),
+                lat: 0.0,
+                lon: 0.0,
+            },
+            Repeater {
+                id: "000002".to_string(),
+                name: "B".to_string(),
+                lat: 0.1,
+                lon: 0.0,
+            },
+            Repeater {
+                id: "000003".to_string(),
+                name: "C".to_string(),
+                lat: 0.2,
+                lon: 0.0,
+            },
+        ];
+
+        let path = find_path(&nodes, 0, 2).expect("Path should exist");
+        assert_eq!(path, vec![0, 1, 2]);
+    }
+
+    #[test]
+    fn test_dijkstra_no_path() {
+        // Two nodes far apart
+        let nodes = vec![
+            Repeater {
+                id: "000001".to_string(),
+                name: "A".to_string(),
+                lat: 0.0,
+                lon: 0.0,
+            },
+            Repeater {
+                id: "000002".to_string(),
+                name: "B".to_string(),
+                lat: 10.0, // > 1000km away
+                lon: 0.0,
+            },
+        ];
+
+        let path = find_path(&nodes, 0, 1);
+        assert!(path.is_none());
+    }
+}

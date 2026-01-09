@@ -1,5 +1,6 @@
 use crate::models::Repeater;
 use crate::physics::link_cost;
+use anyhow::{Result, anyhow};
 
 #[derive(Debug, Clone)]
 struct TrellisNode {
@@ -13,9 +14,9 @@ struct TrellisNode {
 /// * `observations`: The sequence of 1-byte prefixes (u8) observed in the packet header.
 ///
 /// Returns the most likely sequence of node indices.
-pub fn decode_path(nodes: &[Repeater], observations: &[u8]) -> Vec<usize> {
+pub fn decode_path(nodes: &[Repeater], observations: &[u8]) -> Result<Vec<usize>> {
     if observations.is_empty() {
-        return Vec::new();
+        return Ok(Vec::new());
     }
 
     let t_steps = observations.len();
@@ -92,10 +93,7 @@ pub fn decode_path(nodes: &[Repeater], observations: &[u8]) -> Vec<usize> {
         }
 
         if !any_reachable {
-            // If we get stuck (no path explains this observation), we might have a gap.
-            // For this specific task, we assume the path is valid.
-            // But good to log or handle?
-            // println!("Warning: Viterbi stuck at step {}", t);
+            return Err(anyhow!("Viterbi stuck at step {}: no reachable states", t));
         }
     }
 
@@ -112,8 +110,8 @@ pub fn decode_path(nodes: &[Repeater], observations: &[u8]) -> Vec<usize> {
     }
 
     // Backtracking
-    let mut path = Vec::new();
     if let Some(mut curr_idx) = best_final_state {
+        let mut path = Vec::new();
         path.push(curr_idx);
         for t in (1..t_steps).rev() {
             if let Some(prev_idx) = trellis[t][curr_idx].prev_node_idx {
@@ -121,11 +119,12 @@ pub fn decode_path(nodes: &[Repeater], observations: &[u8]) -> Vec<usize> {
                 curr_idx = prev_idx;
             } else {
                 // Should not happen if path is valid
-                break;
+                return Err(anyhow!("Broken path during backtracking at step {}", t));
             }
         }
         path.reverse();
+        Ok(path)
+    } else {
+        Err(anyhow!("No valid path found (final state unreachable)"))
     }
-
-    path
 }
