@@ -56,14 +56,9 @@ pub fn decode_path(nodes: &[Repeater], observations: &[u8]) -> Result<Vec<PathNo
             trellis[0][i].cost = 0.0;
         }
     }
-    // Also initialize Unknown state if needed
-    // If we start with an unknown node, we assume cost 0?
-    // Or should we prefer known nodes?
-    // Let's verify if any known node matched. If not, Unknown is the only choice.
-    // Even if one matches, Unknown is a valid state (maybe the known one is geographically impossible later).
-    // Let's give Unknown a small penalty at start to prefer Known if available?
-    // Or just 0.0. Let's stick to 0.0 for now, relying on later link costs to disambiguate.
-    // Actually, if we start at Unknown, we have no location. That's fine.
+    // Also initialize Unknown state.
+    // It is a valid starting point (cost 0) to allow paths beginning with an unknown node.
+    // We rely on subsequent link costs to prefer known nodes if they are geographically feasible.
     trellis[0][unknown_state_idx].cost = 0.0;
 
     // Forward Pass
@@ -217,5 +212,56 @@ mod tests {
         assert_eq!(result[1], PathNode::Unknown(0xB0));
         assert_eq!(result[2], PathNode::Unknown(0xB1));
         assert_eq!(result[3], PathNode::Known(1));
+    }
+
+    #[test]
+    fn test_confounding_prefix_mismatch() {
+        // Scenario: A -> (B_Unknown) -> C
+        // There is a Node B_bad at a perfect location, but it has the wrong prefix.
+        // We should select Unknown(B) instead of Known(B_bad).
+
+        let node_a = create_node("A00000", 0.0, 0.0);
+        let node_c = create_node("C00000", 0.2, 0.0);
+        // Node "B_bad": Perfect middle spot (0.1, 0.0) but prefix D0 (mismatch for B0)
+        let node_b_bad = create_node("D00000", 0.1, 0.0);
+
+        let nodes = vec![node_a, node_c, node_b_bad];
+
+        // Observations: A0, B0, C0
+        let obs = vec![0xA0, 0xB0, 0xC0];
+
+        let result = decode_path(&nodes, &obs).expect("Viterbi failed");
+
+        // Should pick A -> Unknown(B0) -> C
+        // Not A -> D0 -> C (impossible due to emission)
+        assert_eq!(result.len(), 3);
+        assert_eq!(result[0], PathNode::Known(0)); // A
+        assert_eq!(result[1], PathNode::Unknown(0xB0)); // Unknown B0
+        assert_eq!(result[2], PathNode::Known(1)); // C
+    }
+
+    #[test]
+    fn test_confounding_distance_cost() {
+        // Scenario: A -> (B_Unknown) -> C
+        // Node B_far exists with correct prefix (B0), but is way too far.
+        // Cost(A->B_far) should be > UNKNOWN_LINK_COST (8.0).
+        // Viterbi should prefer Unknown(B0) over Known(B_far).
+
+        let node_a = create_node("A00000", 0.0, 0.0);
+        let node_c = create_node("C00000", 0.2, 0.0); // ~22km from A
+        // Node B_far: Correct prefix B0, but at (2.0, 0.0) -> ~222km away
+        // link_cost for 222km is likely INFINITY or very high (>8.0).
+        let node_b_far = create_node("B00000", 2.0, 0.0);
+
+        let nodes = vec![node_a, node_c, node_b_far];
+
+        let obs = vec![0xA0, 0xB0, 0xC0];
+
+        let result = decode_path(&nodes, &obs).expect("Viterbi failed");
+
+        assert_eq!(result.len(), 3);
+        assert_eq!(result[0], PathNode::Known(0));
+        assert_eq!(result[1], PathNode::Unknown(0xB0)); // Should prefer Unknown due to lower cost
+        assert_eq!(result[2], PathNode::Known(1));
     }
 }
