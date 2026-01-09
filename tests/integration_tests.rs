@@ -2,7 +2,7 @@ use app::models::Repeater;
 use app::pathfinding::find_path;
 use app::physics;
 use app::test_utils::generate_dummy_nodes;
-use app::viterbi::decode_path;
+use app::viterbi::{PathNode, decode_path};
 
 fn find_node_idx(nodes: &[Repeater], id: &str) -> Option<usize> {
     nodes.iter().position(|n| n.id == id)
@@ -34,10 +34,22 @@ fn verify_path_reconstruction(nodes: &[Repeater], ground_truth_indices: &[usize]
         .collect();
 
     // 2. Run Viterbi
-    let reconstructed_indices =
-        decode_path(nodes, &prefixes).expect("Viterbi failed to decode path");
+    let reconstructed_path = decode_path(nodes, &prefixes).expect("Viterbi failed to decode path");
 
     // 3. Verify
+    // Convert reconstructed path (Vec<PathNode>) to indices (Vec<usize>) for comparison
+    // If any node is Unknown, this specific verification fails (as it expects full knowledge)
+    let reconstructed_indices: Vec<usize> = reconstructed_path
+        .iter()
+        .map(|node| match node {
+            PathNode::Known(idx) => *idx,
+            PathNode::Unknown(prefix) => panic!(
+                "Unexpected Unknown node with prefix {:02x} in fully known scenario",
+                prefix
+            ),
+        })
+        .collect();
+
     assert_eq!(
         reconstructed_indices, ground_truth_indices,
         "Viterbi reconstructed path does not match ground truth"
