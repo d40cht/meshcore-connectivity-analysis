@@ -1,10 +1,8 @@
-use app::models::Repeater;
-use csv::Writer;
+use crate::models::Repeater;
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
-use std::fs::File;
 
-fn main() -> Result<(), Box<dyn std::error::Error>> {
+pub fn generate_dummy_nodes() -> Vec<Repeater> {
     // Center point (e.g., somewhere in UK)
     let center_lat = 51.5074;
     let center_lon = -0.1278;
@@ -59,23 +57,24 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         lon: center_lon,
     });
     // Node D (Far away)
-    // 2 degrees lat is ~222km
+    // 1.0 degrees lat is ~111km away from center.
+    // This is > 100km away from any other random node (max +0.5).
     nodes.push(Repeater {
         id: "BB2222".to_string(),
         name: "Clash_Global_D".to_string(),
-        lat: center_lat + 2.5,
-        lon: center_lon + 2.0,
+        lat: center_lat + 1.0,
+        lon: center_lon + 0.5,
     });
 
-    // Write to CSV
-    let file = File::create("repeaters.csv")?;
-    let mut wtr = Writer::from_writer(file);
+    // Bridge nodes to reach Node D
+    // Node D is at (+1.0, +0.5). Mesh ends at (+0.5, +0.8).
+    // Bridge 1 at ~0.7. Use unique prefix CC to avoid ambiguity with random nodes.
+    nodes.push(Repeater {
+        id: "CC00D1".to_string(),
+        name: "Bridge_1".to_string(),
+        lat: center_lat + 0.7,
+        lon: center_lon + 0.2,
+    });
 
-    for node in nodes {
-        wtr.serialize(node)?;
-    }
-
-    wtr.flush()?;
-    println!("Generated repeaters.csv with {} nodes.", 104);
-    Ok(())
+    nodes
 }

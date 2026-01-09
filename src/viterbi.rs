@@ -21,11 +21,8 @@ pub fn decode_path(nodes: &[Repeater], observations: &[u8]) -> Vec<usize> {
     let t_steps = observations.len();
     let num_states = nodes.len();
 
-    // trellis[t][state_idx]
-    // We only need to store the current column and the previous column's backpointers?
-    // Actually, to reconstruct, we need backpointers for all steps.
-    // Let's store a matrix of costs and backpointers.
-    // Initialize with Infinity
+    // Trellis matrix: trellis[time_step][state_idx]
+    // Stores the minimum cost to reach this state at this time, and the previous state index.
     let mut trellis = vec![
         vec![
             TrellisNode {
@@ -50,7 +47,7 @@ pub fn decode_path(nodes: &[Repeater], observations: &[u8]) -> Vec<usize> {
         }
     }
 
-    // Recursion
+    // Forward Pass (Iteration)
     for t in 1..t_steps {
         let obs = observations[t];
         let mut any_reachable = false;

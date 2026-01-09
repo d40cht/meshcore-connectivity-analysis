@@ -25,6 +25,7 @@ impl Ord for State {
 }
 
 /// Finds the lowest cost path between start_node and end_node indices.
+/// This uses Dijkstra's algorithm to explore the graph of repeaters.
 /// Returns a vector of node indices representing the path.
 pub fn find_path(nodes: &[Repeater], start_idx: usize, end_idx: usize) -> Option<Vec<usize>> {
     let mut dist: HashMap<usize, f64> = HashMap::new();
