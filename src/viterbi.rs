@@ -18,6 +18,11 @@ struct TrellisNode {
     prev_node_idx: Option<usize>,
 }
 
+// Heuristic threshold derived from the physics model's probability function (-ln(P)).
+// A cost of 8.0 corresponds to a probability of e^-8 (~0.0003).
+// In our link model, this roughly equates to a 110-120km link, representing a "long hop"
+// or marginally feasible link. This ensures known nodes are preferred if they form a
+// plausible path (cost < 8.0), falling back to unknown nodes only when necessary.
 const UNKNOWN_LINK_COST: f64 = 8.0;
 
 /// Runs the Viterbi algorithm to reconstruct the path of nodes.
