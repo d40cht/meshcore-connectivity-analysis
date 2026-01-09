@@ -35,27 +35,29 @@ By finding the **Viterbi Path** (the sequence of nodes that minimizes total path
     * Calculate "Earth Bulge" height: $h \approx d^2 / 8R$. If the bulge exceeds a theoretical antenna height (e.g., 20m), apply a heavy penalty.
 * **Output:** A list of the most likely physical nodes for each packet based on geometry alone.
 
-### Step 2: Spatial Gating & Pre-Calculated Adjacency
-**Goal:** Optimize performance for Rust-speed execution.
-* **Logic:** Load repeaters into an R-Tree spatial index (e.g., using the `rstar` crate).
-* **Optimization:** Since repeaters are static, pre-calculate an adjacency matrix of plausible links. Store the "Cost" (negative log-probability of RSSI) for every valid link.
-* **Viterbi:** The forward pass for 1M messages now becomes a series of $O(1)$ lookups in the adjacency matrix rather than repeated trig/distance calculations.
-
-### Step 3: Topographic Refinement (SRTM Integration)
-**Goal:** Use terrain data to penalize "impossible" links through mountains or ridges.
-* **Logic:** Integrate SRTM (30m) `.hgt` tile parsing.
-* **Algorithm:** For each edge in the adjacency matrix, sample the elevation at points along the path (Bresenham-style line). 
-* **Penalty:** If any terrain point obstructs the line of sight (or the 1st Fresnel zone), increase the edge cost significantly (e.g., a +30dB path loss penalty).
-* **Refinement:** Re-run the Viterbi analysis on the packet set with these terrain-aware costs.
-
-### Step 4: Shadow Network Discovery (Ghost Nodes)
+### Step 2: Shadow Network Discovery (Ghost Nodes)
 **Goal:** Identify repeaters that exist in the real world but aren't in the known database.
 * **Logic:** For every hop in the Viterbi trellis, inject a "Ghost" candidate for that specific prefix.
 * **Costing:** Give Ghost nodes a "Fixed Uncertainty Penalty" (e.g., equivalent to a -122dBm link).
 * **Selection:** If the Viterbi algorithm chooses a Ghost over all known repeaters (because the known ones are topographically blocked or too far), log this as a "Hidden Node Hit."
 * **Aggregation:** Collect all Ghost hits. If a specific prefix consistently appears between two known nodes across multiple messages, we have discovered a likely physical repeater.
 
-### Step 5: Clustering & Promotion (Map Generation)
+### Step 3.1: Topographic Refinement (Random data)
+**Goal:** Use terrain data to penalize "impossible" links through mountains or ridges.
+* **Test logic** for a given simulation region, generate plausible test pink noise to simulate terrain height at 10m resolution. Don't make it so high that it blocks too much transmission (run some checks with and without the elevation to make sure we're only losing max 50% of links).
+* **Algorithm:** For each edge in the adjacency matrix, sample the elevation at points along the path (Bresenham-style line). 
+* **Penalty:** If any terrain point obstructs the line of sight (or the 1st Fresnel zone), increase the edge cost significantly (e.g., a +30dB path loss penalty).
+* **Refinement:** Re-run the Viterbi analysis on the packet set with these terrain-aware costs.
+
+### Step 3.2: Topographic Refinement (SRTM Integration)
+**Goal:** Use real terrain data to penalize "impossible" links through mountains or ridges.
+* **Logic:** Integrate SRTM (30m) `.hgt` tile parsing.
+* **Setup** a main function that loads node locations and messages from CSV files, and terrain from SRTM, pre-calculates edge costs/probabilities for each node (sparse, within a plausible range only) and runs the viterbi for each message to dump a full reconstructed path to disk for each message in a CSV file. 
+
+### Step 3.3: Efficiency
+**Goal**: come up with a method/heuristic that means we do not have to calculate the RSSI between every node in the graph. E.g. find some quick way to generate the conservative coverage polygon for a given node such that we can (with a spatial index) only pull in the plausibly reachable adjacent nodes. And then calcualte and maintain a sparse edge graph.
+
+### Step 4: Clustering & Promotion (Map Generation)
 **Goal:** Finalize the connectivity map and estimate missing node locations.
 * **Logic:** Use **DBSCAN clustering** on the estimated midpoints of Ghost node observations.
 * **Triangulation:** For each cluster, find the Lat/Lon that minimizes path loss (Maximum Likelihood Estimation) for all packets that traversed that Ghost.
