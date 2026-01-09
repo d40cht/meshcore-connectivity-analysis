@@ -1,9 +1,9 @@
-use app::models::Repeater;
+use app::graph::NetworkGraph;
+use app::models::{PathNode, Repeater};
 use app::pathfinding::find_path;
 use app::physics;
-use app::test_utils::generate_dummy_nodes;
-use app::viterbi::{PathNode, decode_path};
 use app::terrain::TerrainMap;
+use app::test_utils::generate_dummy_nodes;
 
 fn find_node_idx(nodes: &[Repeater], id: &str) -> Option<usize> {
     nodes.iter().position(|n| n.id == id)
@@ -35,7 +35,10 @@ fn verify_path_reconstruction(nodes: &[Repeater], ground_truth_indices: &[usize]
         .collect();
 
     // 2. Run Viterbi
-    let reconstructed_path = decode_path(nodes, &prefixes, None).expect("Viterbi failed to decode path");
+    let graph = NetworkGraph::new(nodes.to_vec(), None);
+    let reconstructed_path = graph
+        .decode_path(&prefixes)
+        .expect("Viterbi failed to decode path");
 
     // 3. Verify
     // Convert reconstructed path (Vec<PathNode>) to indices (Vec<usize>) for comparison
@@ -232,18 +235,26 @@ fn test_viterbi_with_terrain() {
         map.data[r * map.width + mid_col] = 1000.0;
         // Make it wide enough to block adjacent rays (approx 1km wide)
         for offset in 1..20 {
-            if mid_col + offset < map.width { map.data[r * map.width + mid_col + offset] = 1000.0; }
-            if mid_col >= offset { map.data[r * map.width + mid_col - offset] = 1000.0; }
+            if mid_col + offset < map.width {
+                map.data[r * map.width + mid_col + offset] = 1000.0;
+            }
+            if mid_col >= offset {
+                map.data[r * map.width + mid_col - offset] = 1000.0;
+            }
         }
     }
 
     // However, leave a "gap" (pass) at the top.
     // Let's clear the top 10% of rows.
     for r in 0..(map.height / 10) {
-            for offset in 0..20 {
-                if mid_col + offset < map.width { map.data[r * map.width + mid_col + offset] = 0.0; }
-                if mid_col >= offset { map.data[r * map.width + mid_col - offset] = 0.0; }
+        for offset in 0..20 {
+            if mid_col + offset < map.width {
+                map.data[r * map.width + mid_col + offset] = 0.0;
             }
+            if mid_col >= offset {
+                map.data[r * map.width + mid_col - offset] = 0.0;
+            }
+        }
     }
 
     // Setup Nodes
@@ -287,7 +298,12 @@ fn test_viterbi_with_terrain() {
     };
 
     // All nodes
-    let nodes = vec![start.clone(), end.clone(), mid_blocked.clone(), mid_detour.clone()];
+    let nodes = vec![
+        start.clone(),
+        end.clone(),
+        mid_blocked.clone(),
+        mid_detour.clone(),
+    ];
 
     // Observations: A0 -> B? -> C0
     // We observe prefix B1 (Blocked) and B2 (Detour) or maybe just B?
@@ -299,7 +315,8 @@ fn test_viterbi_with_terrain() {
     // Case 1: Packet header says [A0, B2, C0].
     // Should be easy, B2 is valid.
     let obs_easy = vec![0xA0, 0xB2, 0xC0];
-    let path_easy = decode_path(&nodes, &obs_easy, Some(&map)).unwrap();
+    let graph = NetworkGraph::new(nodes.clone(), Some(&map));
+    let path_easy = graph.decode_path(&obs_easy).unwrap();
     // Should contain index 3 (Detour)
     if let PathNode::Known(idx) = path_easy[1] {
         assert_eq!(idx, 3, "Should pick Detour node");
@@ -336,12 +353,16 @@ fn test_viterbi_with_terrain() {
     let nodes_ambiguous = vec![start.clone(), end.clone(), mid_blocked_b0, mid_detour_b0];
     let obs_ambiguous = vec![0xA0, 0xB0, 0xC0];
 
-    let path_ambiguous = decode_path(&nodes_ambiguous, &obs_ambiguous, Some(&map)).unwrap();
+    let graph_ambiguous = NetworkGraph::new(nodes_ambiguous.clone(), Some(&map));
+    let path_ambiguous = graph_ambiguous.decode_path(&obs_ambiguous).unwrap();
 
     if let PathNode::Known(idx) = path_ambiguous[1] {
         // Indices: 0=Start, 1=End, 2=Blocked, 3=Detour
-        assert_eq!(idx, 3, "Should pick Detour node (index 3) over Blocked (index 2)");
+        assert_eq!(
+            idx, 3,
+            "Should pick Detour node (index 3) over Blocked (index 2)"
+        );
     } else {
-            panic!("Should be known node");
+        panic!("Should be known node");
     }
 }

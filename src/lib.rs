@@ -1,6 +1,8 @@
+pub mod graph;
+#[cfg(test)]
+mod graph_tests;
 pub mod models;
 pub mod pathfinding;
 pub mod physics;
-pub mod test_utils;
-pub mod viterbi;
 pub mod terrain;
+pub mod test_utils;
