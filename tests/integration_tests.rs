@@ -106,74 +106,88 @@ fn test_global_clash_resolution() {
 
 #[test]
 fn test_complex_multipath() {
-    // Manually construct a specific topology to ensure a path of at least 4 nodes.
-    // We create a chain: S -> A -> B -> C -> E
-    // Step size 0.4 degrees longitude at 51.0 latitude is approx 28km.
-    // 28km has low Earth Bulge (~16m vs 40m threshold) -> Low cost.
-    // 56km (skipping a node) has high Earth Bulge (~60m) -> High cost.
-    // This forces the pathfinder to visit every node in the chain.
+    // Manually construct a "bushy" topology.
+    // Start (S) and End (E) are separated by distance.
+    // A grid of intermediate nodes exists, providing a low-cost but multi-hop path.
+    // A "Shortcut" node exists, providing a fewer-hop but higher-cost path (due to physics/distance).
+    // We expect the pathfinder to choose the grid path (length >= 5) over the shortcut (length 3).
 
     let center_lat = 51.0;
     let center_lon = 0.0;
 
     let mut nodes = Vec::new();
 
-    // Start Node (Index 0)
+    // 0. Start Node
     nodes.push(Repeater {
-        id: "S00000".to_string(),
+        id: "000000".to_string(),
         name: "Start".to_string(),
         lat: center_lat,
         lon: center_lon,
     });
 
-    // Node A (Index 1)
+    // Grid Layers (Indices 1..9)
+    // 3 Layers at lon +0.2, +0.4, +0.6
+    // 3 Rows at lat -0.1, 0.0, +0.1
+    for i in 1..=3 {
+        let lon_offset = i as f64 * 0.2;
+        for j in -1..=1 {
+            let lat_offset = j as f64 * 0.1;
+            // Generate valid Hex IDs with unique prefixes to ensure Viterbi decoding works.
+            // Format: "{Layer}{Row}0000" -> e.g., "100000", "110000", "120000"
+            // i is 1,2,3. j is -1,0,1 -> map j to 0,1,2 for Hex digit.
+            let row_digit = j + 1;
+            let id = format!("{}{:x}0000", i, row_digit);
+
+            nodes.push(Repeater {
+                id,
+                name: format!("Grid_{}_{}", i, j),
+                lat: center_lat + lat_offset,
+                lon: center_lon + lon_offset,
+            });
+        }
+    }
+
+    // 10. Shortcut Node (High lat offset, centered lon)
+    // Positioned at (51.3, 0.4).
+    // Dist S->Shortcut: sqrt(0.3^2 + 0.4^2) ~ 50km
+    // Dist Shortcut->E: similar
+    // This creates a 3-node path: S -> Shortcut -> E
     nodes.push(Repeater {
-        id: "A00000".to_string(),
-        name: "Node_A".to_string(),
-        lat: center_lat,
+        id: "990000".to_string(),
+        name: "Shortcut".to_string(),
+        lat: center_lat + 0.3,
         lon: center_lon + 0.4,
     });
+    let shortcut_idx = nodes.len() - 1;
 
-    // Node B (Index 2)
+    // 11. End Node (at 0.8 lon)
     nodes.push(Repeater {
-        id: "B00000".to_string(),
-        name: "Node_B".to_string(),
+        id: "EE0000".to_string(),
+        name: "End".to_string(),
         lat: center_lat,
         lon: center_lon + 0.8,
     });
-
-    // Node C (Index 3)
-    nodes.push(Repeater {
-        id: "C00000".to_string(),
-        name: "Node_C".to_string(),
-        lat: center_lat,
-        lon: center_lon + 1.2,
-    });
-
-    // End Node (Index 4)
-    nodes.push(Repeater {
-        id: "E00000".to_string(),
-        name: "End".to_string(),
-        lat: center_lat,
-        lon: center_lon + 1.6,
-    });
+    let end_idx = nodes.len() - 1;
 
     let start_idx = 0;
-    let end_idx = 4;
 
     if let Some(path) = find_path(&nodes, start_idx, end_idx) {
-        // Expected path: [0, 1, 2, 3, 4]
+        println!("Found path: {:?}", path);
+
+        // Check it didn't take the shortcut
         assert!(
-            path.len() >= 4,
-            "Path should be at least 4 nodes long, found length {}",
-            path.len()
-        );
-        assert_eq!(
-            path,
-            vec![0, 1, 2, 3, 4],
-            "Path did not follow the expected chain"
+            !path.contains(&shortcut_idx),
+            "Pathfinder chose the high-cost shortcut over the low-cost grid!"
         );
 
+        // Expect path length >= 5 (Start + 3 Grid Nodes + End)
+        assert!(
+            path.len() >= 5,
+            "Path should traverse the grid (>= 5 nodes), found length {}",
+            path.len()
+        );
+
+        // Verify Viterbi reconstruction
         verify_path_reconstruction(&nodes, &path);
     } else {
         panic!("No path found for complex multipath test");
