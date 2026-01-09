@@ -156,10 +156,30 @@ mod tests {
 
         // 0.1 deg ~ 11km.
         let nodes = vec![
-            Repeater { id: "00".into(), name: "S".into(), lat: 0.0, lon: 0.0 },
-            Repeater { id: "01".into(), name: "1".into(), lat: 0.05, lon: 0.05 }, // Path 1: ~15km total
-            Repeater { id: "02".into(), name: "2".into(), lat: 0.5, lon: 0.5 },   // Path 2: ~150km total
-            Repeater { id: "03".into(), name: "E".into(), lat: 0.1, lon: 0.1 },
+            Repeater {
+                id: "00".into(),
+                name: "S".into(),
+                lat: 0.0,
+                lon: 0.0,
+            },
+            Repeater {
+                id: "01".into(),
+                name: "1".into(),
+                lat: 0.05,
+                lon: 0.05,
+            }, // Path 1: ~15km total
+            Repeater {
+                id: "02".into(),
+                name: "2".into(),
+                lat: 0.5,
+                lon: 0.5,
+            }, // Path 2: ~150km total
+            Repeater {
+                id: "03".into(),
+                name: "E".into(),
+                lat: 0.1,
+                lon: 0.1,
+            },
         ];
 
         // Path via 1: 0->1->3. Distances are small. Cost is low.
