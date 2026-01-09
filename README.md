@@ -50,13 +50,13 @@ By finding the **Viterbi Path** (the sequence of nodes that minimizes total path
 * **Penalty:** If any terrain point obstructs the line of sight (or the 1st Fresnel zone), increase the edge cost significantly (e.g., a +30dB path loss penalty).
 * **Refinement:** Re-run the Viterbi analysis on the packet set with these terrain-aware costs.
 
-### Step 3.2: Topographic Refinement (SRTM Integration)
+### Step 3.2: Efficiency
+**Goal**: come up with a method/heuristic that means we do not have to calculate the RSSI between every node in the graph. E.g. find some quick way to generate the conservative coverage polygon for a given node such that we can (with a spatial index) only pull in the plausibly reachable adjacent nodes. And then calcualte and maintain a sparse edge graph.
+
+### Step 3.3: Topographic Refinement (SRTM Integration)
 **Goal:** Use real terrain data to penalize "impossible" links through mountains or ridges.
 * **Logic:** Integrate SRTM (30m) `.hgt` tile parsing.
 * **Setup** a main function that loads node locations and messages from CSV files, and terrain from SRTM, pre-calculates edge costs/probabilities for each node (sparse, within a plausible range only) and runs the viterbi for each message to dump a full reconstructed path to disk for each message in a CSV file. 
-
-### Step 3.3: Efficiency
-**Goal**: come up with a method/heuristic that means we do not have to calculate the RSSI between every node in the graph. E.g. find some quick way to generate the conservative coverage polygon for a given node such that we can (with a spatial index) only pull in the plausibly reachable adjacent nodes. And then calcualte and maintain a sparse edge graph.
 
 ### Step 4: Clustering & Promotion (Map Generation)
 **Goal:** Finalize the connectivity map and estimate missing node locations.
