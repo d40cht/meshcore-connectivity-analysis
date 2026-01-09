@@ -158,7 +158,6 @@ fn test_complex_multipath() {
         lat: center_lat + 0.3,
         lon: center_lon + 0.4,
     });
-    let shortcut_idx = nodes.len() - 1;
 
     // 11. End Node (at 0.8 lon)
     nodes.push(Repeater {
@@ -174,17 +173,19 @@ fn test_complex_multipath() {
     if let Some(path) = find_path(&nodes, start_idx, end_idx) {
         println!("Found path: {:?}", path);
 
-        // Check it didn't take the shortcut
-        assert!(
-            !path.contains(&shortcut_idx),
-            "Pathfinder chose the high-cost shortcut over the low-cost grid!"
-        );
+        // Define the Expected Path IDs (Straight line through the center)
+        // Start -> Grid_1_0 (110000) -> Grid_2_0 (210000) -> Grid_3_0 (310000) -> End
+        let expected_ids = vec!["000000", "110000", "210000", "310000", "EE0000"];
 
-        // Expect path length >= 5 (Start + 3 Grid Nodes + End)
-        assert!(
-            path.len() >= 5,
-            "Path should traverse the grid (>= 5 nodes), found length {}",
-            path.len()
+        let expected_indices: Vec<usize> = expected_ids
+            .iter()
+            .map(|id| find_node_idx(&nodes, id).unwrap_or_else(|| panic!("Node {} not found", id)))
+            .collect();
+
+        assert_eq!(
+            path, expected_indices,
+            "Path found {:?} does not match expected specific path {:?}",
+            path, expected_indices
         );
 
         // Verify Viterbi reconstruction
