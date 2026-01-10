@@ -226,11 +226,7 @@ impl NetworkGraph {
         let mut best_final_cost = f64::INFINITY;
         let mut best_final_state = None;
 
-        // To ensure deterministic tie-breaking (e.g. favoring Known over Unknown, or lower indices),
-        // we can sort the keys. But simpler: iterate and use strict < or <= logic.
-        // HashMap iteration order is random. We MUST iterate in a deterministic order for consistent results.
-        // Let's collect keys and sort them.
-
+        // Ensure deterministic results by iterating over sorted state indices.
         let mut final_states: Vec<usize> = current_costs.keys().cloned().collect();
         final_states.sort_unstable(); // Deterministic order: 0, 1, 2, ..., Unknown(MAX)
 

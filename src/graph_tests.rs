@@ -2,6 +2,7 @@
 mod tests {
     use crate::graph::NetworkGraph;
     use crate::models::{PathNode, Repeater};
+    use crate::terrain::TerrainMap;
 
     // Helper to create a dummy node
     fn create_node(id: &str, lat: f64, lon: f64) -> Repeater {
@@ -51,6 +52,64 @@ mod tests {
     }
 
     #[test]
+    fn test_winding_path_with_terrain_blockage() {
+        // Scenario: A -> B -> C -> E
+        // Direct path A -> E is close enough but blocked by a wall.
+        // Path A -> B -> C -> E goes around the wall via a North gap.
+
+        // Map: 100x100km. Range approx -0.45 to +0.45 deg.
+        let mut map = TerrainMap::new_random(0.0, 0.0, 100.0, 100.0, 30.0);
+        // Flatten
+        for i in 0..map.data.len() { map.data[i] = 0.0; }
+
+        // Add wall at lon=0.05.
+        // Range = 0.9. (-0.45 to 0.45).
+        // 0.05 is at fraction (0.05 - (-0.45))/0.9 = 0.5/0.9 = 0.555.
+        let wall_col = (map.width as f64 * 0.555) as usize;
+        for r in 0..map.height {
+            map.data[r * map.width + wall_col] = 2000.0; // Huge wall
+        }
+
+        // Gap at "top" (North, lat > 0.1).
+        // 0.1 is at fraction (0.1 + 0.45)/0.9 = 0.55/0.9 = 0.61.
+        let gap_start_row = (map.height as f64 * 0.61) as usize;
+        for r in gap_start_row..map.height {
+             map.data[r * map.width + wall_col] = 0.0;
+        }
+
+        // Nodes
+        // A (Start): 0.0, -0.05 (West of wall)
+        // E (End): 0.0, 0.15 (East of wall).
+        // Direct A->E crosses 0.05 at lat 0.0. Blocked (Lat 0.0 < 0.1).
+        let a = create_node("A00000", 0.0, -0.05);
+        let e = create_node("E00000", 0.0, 0.15);
+
+        // B (Waypoint 1): 0.15, 0.0 (North-West)
+        // A->B dist ~18km. Clear.
+        let b = create_node("B00000", 0.15, 0.0);
+
+        // C (Waypoint 2): 0.15, 0.1 (North-East)
+        // B->C dist ~11km. Crosses 0.05 at lat 0.15.
+        // Gap is lat > 0.1. So 0.15 is IN the gap. Clear.
+        let c = create_node("C00000", 0.15, 0.1);
+
+        let nodes = vec![a, b, c, e];
+        // Indices: A=0, B=1, C=2, E=3
+
+        // Obs: A -> B -> C -> E
+        let obs = vec![0xA0, 0xB0, 0xC0, 0xE0];
+
+        let graph = NetworkGraph::new(nodes, Some(&map));
+        let result = graph.decode_path(&obs).expect("Viterbi failed");
+
+        assert_eq!(result.len(), 4);
+        assert_eq!(result[0], PathNode::Known(0)); // A
+        assert_eq!(result[1], PathNode::Known(1)); // B
+        assert_eq!(result[2], PathNode::Known(2)); // C
+        assert_eq!(result[3], PathNode::Known(3)); // E
+    }
+
+    #[test]
     fn test_disconnected_components() {
         // A (0,0) and B (0,10) are disconnected (>1000km).
         // Obs: [A0, B0].
@@ -68,19 +127,11 @@ mod tests {
 
         // We expect A -> Unknown(B0).
         if result[0] != PathNode::Known(0) {
-            println!("Result: {:?}", result);
+             println!("Result: {:?}", result);
         }
 
-        assert_eq!(
-            result[0],
-            PathNode::Known(0),
-            "Should start with Known node A"
-        );
-        assert_eq!(
-            result[1],
-            PathNode::Unknown(0xB0),
-            "Should fallback to Unknown for B"
-        );
+        assert_eq!(result[0], PathNode::Known(0), "Should start with Known node A");
+        assert_eq!(result[1], PathNode::Unknown(0xB0), "Should fallback to Unknown for B");
     }
 
     #[test]
