@@ -8,6 +8,10 @@ use std::collections::HashMap;
 // Constants
 const MAX_LINK_RANGE_KM: f64 = 150.0;
 
+/// Maximum allowable link cost to be considered feasible.
+/// Links with costs higher than this (e.g. due to terrain obstruction) are pruned from the sparse graph.
+const MAX_FEASIBLE_LINK_COST: f64 = 1000.0;
+
 /// Cost for staying in the Unknown state (Unknown -> Unknown).
 /// This is the "base" penalty for missing information.
 const COST_TRANSITION_UNKNOWN_TO_UNKNOWN: f64 = 8.0;
@@ -45,11 +49,10 @@ impl RTreeObject for SpatialNode {
 
 impl PointDistance for SpatialNode {
     fn distance_2(&self, point: &[f64; 2]) -> f64 {
-        let d_lon = self.lon - point[0];
-        let d_lat = self.lat - point[1];
-        // Euclidean distance squared in degrees (approximate, for sorting/querying)
-        // Physics calculations will use Haversine.
-        d_lon * d_lon + d_lat * d_lat
+        // Use Haversine distance squared for accurate spatial queries.
+        // point is [lon, lat]
+        let dist = crate::physics::haversine_distance(self.lat, self.lon, point[1], point[0]);
+        dist * dist
     }
 }
 
@@ -63,8 +66,9 @@ pub struct NetworkGraph {
 
 impl NetworkGraph {
     /// Creates a new NetworkGraph.
-    /// * Builds the R-Tree.
-    /// * Pre-calculates the sparse adjacency matrix by finding neighbors within MAX_LINK_RANGE_KM.
+    /// * Builds the R-Tree for spatial indexing.
+    /// * Pre-calculates the sparse adjacency matrix by finding neighbors within MAX_LINK_RANGE_KM
+    ///   and pruning links that are blocked by terrain or physically infeasible.
     pub fn new(nodes: Vec<Repeater>, terrain: Option<&TerrainMap>) -> Self {
         let mut rtree_nodes = Vec::with_capacity(nodes.len());
         let mut nodes_by_prefix = vec![Vec::new(); 256];
@@ -104,7 +108,7 @@ impl NetworkGraph {
                     neighbor_node.lon,
                     terrain,
                 );
-                if cost.is_finite() && cost < 1000.0 {
+                 if cost.is_finite() && cost < MAX_FEASIBLE_LINK_COST {
                     adjacency[i].push((j, cost));
                 }
             }
@@ -238,7 +242,7 @@ impl NetworkGraph {
             }
         }
 
-        // Backtracking
+        // Backtrack from the best final state to reconstruct the most likely path.
         if let Some(mut curr_idx) = best_final_state {
             let mut path = Vec::new();
             let last_t = t_steps - 1;
