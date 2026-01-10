@@ -37,9 +37,11 @@ fn main() -> Result<(), Box<dyn Error>> {
     let output_path = &args[3];
 
     // Read Repeaters
-    let mut rdr = csv::Reader::from_path(repeaters_path)?;
+    // Example: ID,Name,Lat,Lon
+    // Example: 0x1234,RepeaterA,34.05,-118.25
+    let mut repeater_reader = csv::Reader::from_path(repeaters_path)?;
     let mut repeaters: Vec<Repeater> = Vec::new();
-    for result in rdr.deserialize() {
+    for result in repeater_reader.deserialize() {
         let record: Repeater = result?;
         repeaters.push(record);
     }
@@ -52,15 +54,17 @@ fn main() -> Result<(), Box<dyn Error>> {
     let graph = NetworkGraph::new(repeaters, None);
 
     // Read Packets
-    let mut p_rdr = csv::Reader::from_path(packets_path)?;
+    // Example: timestamp,start_lat,start_lon,end_lat,end_lon,repeater_prefixes
+    // Example: 2023-10-27T10:00:00Z,34.05,-118.25,34.10,-118.30,12:a4:b6
+    let mut packet_reader = csv::Reader::from_path(packets_path)?;
     let mut outputs: Vec<PathOutput> = Vec::new();
 
-    for result in p_rdr.deserialize() {
+    for result in packet_reader.deserialize() {
         let packet: PacketInput = result?;
 
-        // Parse prefixes (assume comma-separated hex strings)
+        // Parse prefixes (assume colon-separated hex strings)
         let prefixes_vec: Vec<u8> = packet.repeater_prefixes
-            .split(',')
+            .split(':')
             .map(|s| s.trim())
             .filter(|s| !s.is_empty())
             .map(|s| {
