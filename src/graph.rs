@@ -3,6 +3,7 @@ use crate::physics::link_cost;
 use crate::terrain::TerrainMap;
 use anyhow::{Result, anyhow};
 use rstar::{AABB, PointDistance, RTree, RTreeObject};
+use std::collections::HashMap;
 
 // Constants
 const MAX_LINK_RANGE_KM: f64 = 150.0;
@@ -79,12 +80,9 @@ impl NetworkGraph {
 
         let rtree = RTree::bulk_load(rtree_nodes);
 
-        let mut adjacency = vec![Vec::new(); nodes.len()];
+        let mut adjacency: Vec<Vec<(usize, f64)>> = vec![Vec::new(); nodes.len()];
 
-        // Pre-calculate edges
         for (i, node) in nodes.iter().enumerate() {
-            // 1 degree lat is ~111km.
-            // Be conservative: search a bit wider than the exact KM limit.
             let search_radius_deg = (MAX_LINK_RANGE_KM / 111.0) * 1.2;
             let lat_min = node.lat - search_radius_deg;
             let lat_max = node.lat + search_radius_deg;
@@ -98,7 +96,6 @@ impl NetworkGraph {
                 if i == j {
                     continue;
                 }
-
                 let neighbor_node = &nodes[j];
                 let cost = link_cost(
                     node.lat,
@@ -107,8 +104,6 @@ impl NetworkGraph {
                     neighbor_node.lon,
                     terrain,
                 );
-
-                // Add edge if cost is feasible (not infinite)
                 if cost.is_finite() && cost < 1000.0 {
                     adjacency[i].push((j, cost));
                 }
@@ -122,141 +117,134 @@ impl NetworkGraph {
         }
     }
 
-    /// Decodes a path using the sparse graph.
+    /// Decodes a path using the sparse graph and dynamic trellis expansion.
+    /// Uses HashMaps to track only reachable states at each step.
     pub fn decode_path(&self, observations: &[u8]) -> Result<Vec<PathNode>> {
         if observations.is_empty() {
             return Ok(Vec::new());
         }
 
         let t_steps = observations.len();
-        // State representation:
-        // We cannot use a simple matrix [t][state] because 'state' maps to node index,
-        // and we have ~10k nodes.
-        // However, standard Viterbi usually does exactly that. 10k * 10 steps = 100k floats.
-        // That is actually very small (400KB).
-        // So a dense matrix is fine and faster than hashmaps.
+        let unknown_state_idx = self.nodes.len(); // Special index for Unknown state
 
-        let num_nodes = self.nodes.len();
-        let unknown_state_idx = num_nodes;
-        let total_states = num_nodes + 1;
+        // Trellis: [step] -> { state_idx -> (cost, prev_state_idx) }
+        // prev_state_idx is stored to allow backtracking.
+        // We only need the current 'cost' map to compute next step,
+        // but we need the FULL history of backpointers to reconstruct the path.
+        // So:
+        // `current_costs`: HashMap<usize, f64> (Active states and their costs)
+        // `backpointers`: Vec<HashMap<usize, usize>> (History of transitions)
 
-        // Current costs: maps state_idx -> cost
-        // We only store the *current* and *previous* step costs to save memory,
-        // but we need backpointers for the whole history.
+        let mut backpointers: Vec<HashMap<usize, usize>> = Vec::with_capacity(t_steps);
+        // Step 0 initialization (no backpointers)
+        backpointers.push(HashMap::new());
 
-        // Backpointers: [step][current_state_idx] -> prev_state_idx
-        // Using Option<usize> to indicate reachability.
-        // Since we have a sparse graph, many states will be unreachable (Cost = Infinity).
-        // Storing a dense backpointer matrix is fine (10k * len * 8 bytes).
-        // For 100 hops, that's 8MB. Acceptable.
-
-        let mut backpointers = vec![vec![None; total_states]; t_steps];
-
-        // Initialize Step 0
-        let mut prev_costs = vec![f64::INFINITY; total_states];
+        let mut current_costs: HashMap<usize, f64> = HashMap::new();
 
         let first_obs = observations[0];
 
-        // Initialize Known nodes matching the first prefix
-        // Give a small bonus to prefer starting with a Known node over Unknown.
+        // Initialize Known nodes matching first prefix
         for &node_idx in &self.nodes_by_prefix[first_obs as usize] {
-            prev_costs[node_idx] = COST_START_KNOWN;
+            current_costs.insert(node_idx, COST_START_KNOWN);
         }
 
         // Initialize Unknown state
-        prev_costs[unknown_state_idx] = 0.0;
+        current_costs.insert(unknown_state_idx, 0.0);
 
         // Forward Pass
         for t in 1..t_steps {
             let obs = observations[t];
-            let mut curr_costs = vec![f64::INFINITY; total_states];
-            let mut any_reachable = false;
+            let mut next_costs: HashMap<usize, f64> = HashMap::new();
+            let mut step_backpointers: HashMap<usize, usize> = HashMap::new();
 
-            // To optimize: Iterate only over states that were reachable in prev_costs
-            // But iterating 10k floats is extremely fast in CPU cache.
-            // The bottleneck is the inner loop (checking neighbors).
-            // Let's iterate all potential PREVIOUS states that have finite cost.
+            // Iterate over all active states from previous step
+            for (&prev_idx, &prev_cost) in &current_costs {
+                // Case 1: Previous state was Known
+                if prev_idx < unknown_state_idx {
+                    // 1a. Transition: Known -> Known
+                    // Use sparse adjacency list to find reachable neighbors
+                    if let Some(neighbors) = self.adjacency.get(prev_idx) {
+                        for &(neighbor_idx, link_c) in neighbors {
+                            // Filter: Neighbor must match observation prefix
+                            if self.nodes[neighbor_idx].prefix() == obs {
+                                let total_c = prev_cost + link_c;
 
-            // Optimization: First, identify active previous states to avoid looping all 10k if only 5 are active.
-            // But 'active' list management has overhead.
-            // Let's try simple loop first, optimizing inner logic.
-
-            for prev_idx in 0..total_states {
-                let prev_cost = prev_costs[prev_idx];
-                if prev_cost.is_infinite() {
-                    continue;
-                }
-
-                // 1. Transition: Known(prev) -> Known(curr)
-                if prev_idx < num_nodes {
-                    // Iterate ONLY neighbors from the sparse graph
-                    for &(neighbor_idx, link_c) in &self.adjacency[prev_idx] {
-                        // Check emission (does neighbor match obs?)
-                        if self.nodes[neighbor_idx].prefix() == obs {
-                            let total_c = prev_cost + link_c;
-                            if total_c < curr_costs[neighbor_idx] {
-                                curr_costs[neighbor_idx] = total_c;
-                                backpointers[t][neighbor_idx] = Some(prev_idx);
-                                any_reachable = true;
+                                // Update if this path is cheaper
+                                let entry = next_costs.entry(neighbor_idx).or_insert(f64::INFINITY);
+                                if total_c < *entry {
+                                    *entry = total_c;
+                                    step_backpointers.insert(neighbor_idx, prev_idx);
+                                }
                             }
                         }
                     }
 
-                    // 2. Transition: Known(prev) -> Unknown
+                    // 1b. Transition: Known -> Unknown
                     let unknown_cost = prev_cost + COST_TRANSITION_KNOWN_TO_UNKNOWN;
-                    if unknown_cost < curr_costs[unknown_state_idx] {
-                        curr_costs[unknown_state_idx] = unknown_cost;
-                        backpointers[t][unknown_state_idx] = Some(prev_idx);
-                        any_reachable = true;
+                    let entry = next_costs.entry(unknown_state_idx).or_insert(f64::INFINITY);
+                    if unknown_cost < *entry {
+                        *entry = unknown_cost;
+                        step_backpointers.insert(unknown_state_idx, prev_idx);
                     }
                 } else {
-                    // Previous was Unknown
-                    // 3. Transition: Unknown -> Known(curr)
-                    // We allow transition to ANY node matching the observation.
+                    // Case 2: Previous state was Unknown
+
+                    // 2a. Transition: Unknown -> Known
+                    // Try to snap to ANY Known node matching the prefix
                     for &curr_idx in &self.nodes_by_prefix[obs as usize] {
                         let total_c = prev_cost + COST_TRANSITION_UNKNOWN_TO_KNOWN;
-                        if total_c < curr_costs[curr_idx] {
-                            curr_costs[curr_idx] = total_c;
-                            backpointers[t][curr_idx] = Some(prev_idx);
-                            any_reachable = true;
+                        let entry = next_costs.entry(curr_idx).or_insert(f64::INFINITY);
+                        if total_c < *entry {
+                            *entry = total_c;
+                            step_backpointers.insert(curr_idx, prev_idx);
                         }
                     }
 
-                    // 4. Transition: Unknown -> Unknown
+                    // 2b. Transition: Unknown -> Unknown
                     let unknown_unknown_cost = prev_cost + COST_TRANSITION_UNKNOWN_TO_UNKNOWN;
-                    if unknown_unknown_cost < curr_costs[unknown_state_idx] {
-                        curr_costs[unknown_state_idx] = unknown_unknown_cost;
-                        backpointers[t][unknown_state_idx] = Some(prev_idx);
-                        any_reachable = true;
+                    let entry = next_costs.entry(unknown_state_idx).or_insert(f64::INFINITY);
+                    if unknown_unknown_cost < *entry {
+                        *entry = unknown_unknown_cost;
+                        step_backpointers.insert(unknown_state_idx, prev_idx);
                     }
                 }
             }
 
-            if !any_reachable {
+            if next_costs.is_empty() {
                 return Err(anyhow!("Viterbi stuck at step {}: no reachable states", t));
             }
 
-            prev_costs = curr_costs;
+            current_costs = next_costs;
+            backpointers.push(step_backpointers);
         }
 
-        // Backtracking
-        let last_t = t_steps - 1;
+        // Termination: Find best final state
         let mut best_final_cost = f64::INFINITY;
         let mut best_final_state = None;
 
-        for i in 0..total_states {
-            if prev_costs[i] < best_final_cost {
-                best_final_cost = prev_costs[i];
-                best_final_state = Some(i);
+        // To ensure deterministic tie-breaking (e.g. favoring Known over Unknown, or lower indices),
+        // we can sort the keys. But simpler: iterate and use strict < or <= logic.
+        // HashMap iteration order is random. We MUST iterate in a deterministic order for consistent results.
+        // Let's collect keys and sort them.
+
+        let mut final_states: Vec<usize> = current_costs.keys().cloned().collect();
+        final_states.sort_unstable(); // Deterministic order: 0, 1, 2, ..., Unknown(MAX)
+
+        for &state_idx in &final_states {
+            let cost = current_costs[&state_idx];
+            if cost < best_final_cost {
+                best_final_cost = cost;
+                best_final_state = Some(state_idx);
             }
         }
 
+        // Backtracking
         if let Some(mut curr_idx) = best_final_state {
             let mut path = Vec::new();
+            let last_t = t_steps - 1;
 
-            // Helper to convert state idx to PathNode
             let to_path_node = |idx: usize, step_idx: usize| -> PathNode {
-                if idx < num_nodes {
+                if idx < unknown_state_idx {
                     PathNode::Known(idx)
                 } else {
                     PathNode::Unknown(observations[step_idx])
@@ -266,7 +254,7 @@ impl NetworkGraph {
             path.push(to_path_node(curr_idx, last_t));
 
             for t in (1..t_steps).rev() {
-                if let Some(prev_idx) = backpointers[t][curr_idx] {
+                if let Some(&prev_idx) = backpointers[t].get(&curr_idx) {
                     path.push(to_path_node(prev_idx, t - 1));
                     curr_idx = prev_idx;
                 } else {
