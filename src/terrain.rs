@@ -26,22 +26,8 @@ impl TerrainMap {
         height_km: f64,
         resolution_m: f64,
     ) -> Self {
-        let km_per_deg_lat = 111.0;
-        let km_per_deg_lon = 111.0 * center_lat.to_radians().cos();
-
-        let height_deg = height_km / km_per_deg_lat;
-        let width_deg = width_km / km_per_deg_lon;
-
-        let min_lat = center_lat - height_deg / 2.0;
-        let max_lat = center_lat + height_deg / 2.0;
-        let min_lon = center_lon - width_deg / 2.0;
-        let max_lon = center_lon + width_deg / 2.0;
-
-        let res_deg_lat = (resolution_m / 1000.0) / km_per_deg_lat;
-
-        // We use a square grid in terms of samples, but derived from meters
-        let rows = (height_km * 1000.0 / resolution_m).ceil() as usize;
-        let cols = (width_km * 1000.0 / resolution_m).ceil() as usize;
+        let (min_lat, max_lat, min_lon, max_lon, res_deg_lat, rows, cols) =
+            Self::calc_bounds(center_lat, center_lon, width_km, height_km, resolution_m);
 
         let mut rng = StdRng::seed_from_u64(12345);
         let mut data = vec![0.0; rows * cols];
@@ -102,6 +88,66 @@ impl TerrainMap {
             height: rows,
             data,
         }
+    }
+
+    /// Creates a new flat TerrainMap (all elevation 0.0).
+    pub fn new_flat(
+        center_lat: f64,
+        center_lon: f64,
+        width_km: f64,
+        height_km: f64,
+        resolution_m: f64,
+    ) -> Self {
+        let (min_lat, max_lat, min_lon, max_lon, res_deg_lat, rows, cols) =
+            Self::calc_bounds(center_lat, center_lon, width_km, height_km, resolution_m);
+
+        let data = vec![0.0; rows * cols];
+
+        TerrainMap {
+            min_lat,
+            min_lon,
+            max_lat,
+            max_lon,
+            resolution_deg: res_deg_lat,
+            width: cols,
+            height: rows,
+            data,
+        }
+    }
+
+    fn calc_bounds(
+        center_lat: f64,
+        center_lon: f64,
+        width_km: f64,
+        height_km: f64,
+        resolution_m: f64,
+    ) -> (f64, f64, f64, f64, f64, usize, usize) {
+        let km_per_deg_lat = 111.0;
+        let km_per_deg_lon = 111.0 * center_lat.to_radians().cos();
+
+        let height_deg = height_km / km_per_deg_lat;
+        let width_deg = width_km / km_per_deg_lon;
+
+        let min_lat = center_lat - height_deg / 2.0;
+        let max_lat = center_lat + height_deg / 2.0;
+        let min_lon = center_lon - width_deg / 2.0;
+        let max_lon = center_lon + width_deg / 2.0;
+
+        let res_deg_lat = (resolution_m / 1000.0) / km_per_deg_lat;
+
+        // We use a square grid in terms of samples, but derived from meters
+        let rows = (height_km * 1000.0 / resolution_m).ceil() as usize;
+        let cols = (width_km * 1000.0 / resolution_m).ceil() as usize;
+
+        (
+            min_lat,
+            max_lat,
+            min_lon,
+            max_lon,
+            res_deg_lat,
+            rows,
+            cols,
+        )
     }
 
     /// Gets the elevation at a specific latitude and longitude using bilinear interpolation.

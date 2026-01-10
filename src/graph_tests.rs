@@ -53,14 +53,12 @@ mod tests {
 
     #[test]
     fn test_winding_path_with_terrain_blockage() {
-        // Scenario: A -> B -> C -> E
-        // Direct path A -> E is close enough but blocked by a wall.
-        // Path A -> B -> C -> E goes around the wall via a North gap.
+        // Scenario: A -> B -> C -> D
+        // Direct path A -> D is close enough but blocked by a wall.
+        // Path A -> B -> C -> D goes around the wall via a North gap.
 
         // Map: 100x100km. Range approx -0.45 to +0.45 deg.
-        let mut map = TerrainMap::new_random(0.0, 0.0, 100.0, 100.0, 30.0);
-        // Flatten
-        for i in 0..map.data.len() { map.data[i] = 0.0; }
+        let mut map = TerrainMap::new_flat(0.0, 0.0, 100.0, 100.0, 30.0);
 
         // Add wall at lon=0.05.
         // Range = 0.9. (-0.45 to 0.45).
@@ -79,10 +77,10 @@ mod tests {
 
         // Nodes
         // A (Start): 0.0, -0.05 (West of wall)
-        // E (End): 0.0, 0.15 (East of wall).
-        // Direct A->E crosses 0.05 at lat 0.0. Blocked (Lat 0.0 < 0.1).
+        // D (End): 0.0, 0.15 (East of wall).
+        // Direct A->D crosses 0.05 at lat 0.0. Blocked (Lat 0.0 < 0.1).
         let a = create_node("A00000", 0.0, -0.05);
-        let e = create_node("E00000", 0.0, 0.15);
+        let d = create_node("D00000", 0.0, 0.15);
 
         // B (Waypoint 1): 0.15, 0.0 (North-West)
         // A->B dist ~18km. Clear.
@@ -93,11 +91,11 @@ mod tests {
         // Gap is lat > 0.1. So 0.15 is IN the gap. Clear.
         let c = create_node("C00000", 0.15, 0.1);
 
-        let nodes = vec![a, b, c, e];
-        // Indices: A=0, B=1, C=2, E=3
+        let nodes = vec![a.clone(), b.clone(), c.clone(), d.clone()];
+        // Indices: A=0, B=1, C=2, D=3
 
-        // Obs: A -> B -> C -> E
-        let obs = vec![0xA0, 0xB0, 0xC0, 0xE0];
+        // Obs: A -> B -> C -> D
+        let obs = vec![0xA0, 0xB0, 0xC0, 0xD0];
 
         let graph = NetworkGraph::new(nodes, Some(&map));
         let result = graph.decode_path(&obs).expect("Viterbi failed");
@@ -106,7 +104,7 @@ mod tests {
         assert_eq!(result[0], PathNode::Known(0)); // A
         assert_eq!(result[1], PathNode::Known(1)); // B
         assert_eq!(result[2], PathNode::Known(2)); // C
-        assert_eq!(result[3], PathNode::Known(3)); // E
+        assert_eq!(result[3], PathNode::Known(3)); // D
     }
 
     #[test]
