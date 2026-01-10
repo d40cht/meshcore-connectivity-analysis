@@ -60,8 +60,11 @@ By finding the **Viterbi Path** (the sequence of nodes that minimizes total path
 
 ### Step 4: Clustering & Promotion (Map Generation)
 **Goal:** Finalize the connectivity map and estimate missing node locations.
-* **Logic:** Use **DBSCAN clustering** on the estimated midpoints of Ghost node observations.
-* **Triangulation:** For each cluster, find the Lat/Lon that minimizes path loss (Maximum Likelihood Estimation) for all packets that traversed that Ghost.
+* **Logic:** Implement a **2-Pass Algorithm** to recover accurate locations for unknown nodes:
+    * **Pass 1: Coarse Localization (Clustering).** Extract all `Known(A) -> Unknown(X) -> Known(B)` triplets from the Viterbi paths. Calculate the geometric midpoint for each triplet. Group these estimates by their 1-byte prefix and perform spatial clustering (e.g., merge points within 20km) to identify "Regions of Interest."
+    * **Pass 2: Terrain-Aware Refinement (Reachability Heatmap).** For each cluster, generate a high-resolution search grid (30m steps) around the centroid.
+    * **Scoring:** Evaluate each grid point against the project's physics model. A point receives a score based on the number of "Witness Neighbors" (the A and B nodes from Pass 1) it can validly reach (using `physics::link_cost` with a feasibility threshold).
+    * **Selection & Disambiguation:** Identify all grid cells that share the maximum "Reachability Intersection" score. Group these contiguous cells into **Connected Components** (blobs). Calculate the **Center of Mass** (geometric centroid) for each component. Instead of picking a single winner, **store all distinct components** as potential candidates. Each candidate will include metadata: **Area Size** (sqm) and **Mean Link Cost** (proxy for RSSI) to allow users to make an informed decision.
 * **Final Output:** Generate a **GraphML/GeoJSON map** of the network, showing:
     1. Confirmed links between known nodes (weighted by frequency).
     2. Estimated locations of "Discovered" repeaters.
