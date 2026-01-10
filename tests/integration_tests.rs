@@ -2,7 +2,7 @@ use app::graph::NetworkGraph;
 use app::models::{PathNode, Repeater};
 use app::pathfinding::find_path;
 use app::physics;
-use app::terrain::TerrainMap;
+use app::terrain::{TerrainMap, TerrainTile};
 use app::test_utils::generate_dummy_nodes;
 
 fn find_node_idx(nodes: &[Repeater], id: &str) -> Option<usize> {
@@ -216,46 +216,71 @@ fn test_viterbi_with_terrain() {
     // Create a terrain map where there is a "mountain" in the middle
     // but a clear path around it.
 
-    let center_lat = 0.0;
-    let center_lon = 0.0;
-    // Small map 50x50km
-    let mut map = TerrainMap::new_random(center_lat, center_lon, 50.0, 50.0, 30.0);
+    let center_lat: f64 = 0.0;
+    let center_lon: f64 = 0.0;
+    let width_km: f64 = 50.0;
+    let height_km: f64 = 50.0;
+    let resolution_m: f64 = 30.0;
 
-    // FLATTEN the map first to avoid random noise blocking the path
-    for i in 0..map.data.len() {
-        map.data[i] = 0.0;
-    }
+    // Bounds calc logic matching TerrainMap
+    let km_per_deg_lat = 111.0;
+    let km_per_deg_lon = 111.0 * center_lat.to_radians().cos();
+
+    let height_deg = height_km / km_per_deg_lat;
+    let width_deg = width_km / km_per_deg_lon;
+
+    let min_lat = center_lat - height_deg / 2.0;
+    let max_lat = center_lat + height_deg / 2.0;
+    let min_lon = center_lon - width_deg / 2.0;
+    let max_lon = center_lon + width_deg / 2.0;
+
+    let rows = (height_km * 1000.0 / resolution_m).ceil() as usize;
+    let cols = (width_km * 1000.0 / resolution_m).ceil() as usize;
+
+    let mut data = vec![0.0; rows * cols];
 
     // MANUALLY inject a mountain wall at x=0 (approx lon=0).
     // The map data is row-major.
     // Let's create a wall along the vertical center line to block direct LOS.
-    let mid_col = map.width / 2;
-    for r in 0..map.height {
+    let mid_col = cols / 2;
+    for r in 0..rows {
         // Make it 1000m high
-        map.data[r * map.width + mid_col] = 1000.0;
+        data[r * cols + mid_col] = 1000.0;
         // Make it wide enough to block adjacent rays (approx 1km wide)
         for offset in 1..20 {
-            if mid_col + offset < map.width {
-                map.data[r * map.width + mid_col + offset] = 1000.0;
+            if mid_col + offset < cols {
+                data[r * cols + mid_col + offset] = 1000.0;
             }
             if mid_col >= offset {
-                map.data[r * map.width + mid_col - offset] = 1000.0;
+                data[r * cols + mid_col - offset] = 1000.0;
             }
         }
     }
 
     // However, leave a "gap" (pass) at the top.
     // Let's clear the top 10% of rows.
-    for r in 0..(map.height / 10) {
+    for r in 0..(rows / 10) {
         for offset in 0..20 {
-            if mid_col + offset < map.width {
-                map.data[r * map.width + mid_col + offset] = 0.0;
+            if mid_col + offset < cols {
+                data[r * cols + mid_col + offset] = 0.0;
             }
             if mid_col >= offset {
-                map.data[r * map.width + mid_col - offset] = 0.0;
+                data[r * cols + mid_col - offset] = 0.0;
             }
         }
     }
+
+    let tile = TerrainTile {
+        min_lat,
+        min_lon,
+        max_lat,
+        max_lon,
+        width: cols,
+        height: rows,
+        data,
+    };
+
+    let map = TerrainMap::new(vec![tile]);
 
     // Setup Nodes
     // Start Node (West)
@@ -287,7 +312,7 @@ fn test_viterbi_with_terrain() {
 
     // 2. Detour path node (Through the gap at the top)
     // Map height is 50km. Top is +0.22 deg approx.
-    let gap_lat = map.min_lat + 0.02; // Use TOP or BOTTOM. The loop cleared rows 0..height/10. Row 0 is min_lat.
+    let gap_lat = min_lat + 0.02; // Use TOP or BOTTOM. The loop cleared rows 0..height/10. Row 0 is min_lat.
     // Row 0 is at min_lat. My loop cleared 0..height/10.
     // So the GAP is at the BOTTOM (South).
     let mid_detour = Repeater {

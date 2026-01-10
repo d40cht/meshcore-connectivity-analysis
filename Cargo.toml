@@ -11,3 +11,4 @@ rstar = "0.12.2"
 serde = { version = "1.0.228", features = ["derive"] }
 serde_derive = "1.0.228"
 serde_yaml = "0.9.34"
+tiff = "0.11.0"

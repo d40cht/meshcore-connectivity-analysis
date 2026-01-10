@@ -1,8 +1,10 @@
 use std::env;
 use std::fs::File;
 use std::error::Error;
+use std::path::Path;
 use app::models::{Repeater, PathNode};
 use app::graph::NetworkGraph;
+use app::terrain::{TerrainMap, TerrainTile};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Deserialize)]
@@ -27,18 +29,69 @@ struct PathOutput {
 
 fn main() -> Result<(), Box<dyn Error>> {
     let args: Vec<String> = env::args().collect();
-    if args.len() != 4 {
-        eprintln!("Usage: {} <repeaters_csv> <packets_csv> <output_yaml>", args[0]);
+
+    // Parse arguments
+    // Expected: [program] [pos1] [pos2] [pos3] [--terrain file1 --terrain file2 ...]
+    // Or mixed.
+    // We need 3 positional args: repeaters_csv, packets_csv, output_yaml.
+    // And optional list of terrain files.
+
+    let mut positional_args = Vec::new();
+    let mut terrain_files = Vec::new();
+
+    let mut i = 1;
+    while i < args.len() {
+        if args[i] == "--terrain" {
+            if i + 1 < args.len() {
+                terrain_files.push(args[i + 1].clone());
+                i += 2;
+            } else {
+                eprintln!("Error: --terrain flag requires a file path");
+                std::process::exit(1);
+            }
+        } else {
+            positional_args.push(args[i].clone());
+            i += 1;
+        }
+    }
+
+    if positional_args.len() != 3 {
+        eprintln!("Usage: {} <repeaters_csv> <packets_csv> <output_yaml> [--terrain <geotiff_path>]...", args[0]);
         std::process::exit(1);
     }
 
-    let repeaters_path = &args[1];
-    let packets_path = &args[2];
-    let output_path = &args[3];
+    let repeaters_path = &positional_args[0];
+    let packets_path = &positional_args[1];
+    let output_path = &positional_args[2];
+
+    // Load Terrain
+    let mut terrain_tiles = Vec::new();
+    for path_str in terrain_files {
+        let path = Path::new(&path_str);
+        match TerrainTile::from_geotiff(path) {
+            Ok(tile) => {
+                println!("Loaded terrain tile from {}", path_str);
+                terrain_tiles.push(tile);
+            },
+            Err(e) => {
+                eprintln!("Failed to load terrain tile {}: {}", path_str, e);
+                // Depending on requirements, maybe exit? User said "return an error...".
+                // We'll treat loading failure as fatal for that file, and if requested, we should probably fail fully?
+                // For now, let's warn and continue, or fail?
+                // "return an error so as not to get silent infeasible paths" -> this was about missing data during lookup.
+                // If we explicitly asked for a file and it fails, we should probably stop.
+                std::process::exit(1);
+            }
+        }
+    }
+
+    let terrain_map = if !terrain_tiles.is_empty() {
+        Some(TerrainMap::new(terrain_tiles))
+    } else {
+        None
+    };
 
     // Read Repeaters
-    // Example: ID,Name,Lat,Lon
-    // Example: 0x1234,RepeaterA,34.05,-118.25
     let mut repeater_reader = csv::Reader::from_path(repeaters_path)?;
     let mut repeaters: Vec<Repeater> = Vec::new();
     for result in repeater_reader.deserialize() {
@@ -50,12 +103,9 @@ fn main() -> Result<(), Box<dyn Error>> {
     let lookup_nodes = repeaters.clone();
 
     // Initialize Graph
-    // Terrain is None for now as per instructions
-    let graph = NetworkGraph::new(repeaters, None);
+    let graph = NetworkGraph::new(repeaters, terrain_map.as_ref());
 
     // Read Packets
-    // Example: timestamp,start_lat,start_lon,end_lat,end_lon,repeater_prefixes
-    // Example: 2023-10-27T10:00:00Z,34.05,-118.25,34.10,-118.30,12:a4:b6
     let mut packet_reader = csv::Reader::from_path(packets_path)?;
     let mut outputs: Vec<PathOutput> = Vec::new();
 
