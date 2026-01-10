@@ -64,7 +64,7 @@ By finding the **Viterbi Path** (the sequence of nodes that minimizes total path
     * **Pass 1: Coarse Localization (Clustering).** Extract all `Known(A) -> Unknown(X) -> Known(B)` triplets from the Viterbi paths. Calculate the geometric midpoint for each triplet. Group these estimates by their 1-byte prefix and perform spatial clustering (e.g., merge points within 20km) to identify "Regions of Interest."
     * **Pass 2: Terrain-Aware Refinement (Reachability Heatmap).** For each cluster, generate a high-resolution search grid (30m steps) around the centroid.
     * **Scoring:** Evaluate each grid point against the project's physics model. A point receives a score based on the number of "Witness Neighbors" (the A and B nodes from Pass 1) it can validly reach (using `physics::link_cost` with a feasibility threshold).
-    * **Selection:** The grid point with the highest "Reachability Intersection" score is selected as the estimated location of the discovered repeater.
+    * **Selection & Disambiguation:** Identify all grid cells that share the maximum "Reachability Intersection" score. Group these contiguous cells into **Connected Components** (blobs). Calculate the **Center of Mass** (geometric centroid) for each component to determine the final coordinate. If multiple distinct components exist, the one with the lowest total link cost (strongest aggregate signal) is selected.
 * **Final Output:** Generate a **GraphML/GeoJSON map** of the network, showing:
     1. Confirmed links between known nodes (weighted by frequency).
     2. Estimated locations of "Discovered" repeaters.
