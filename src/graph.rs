@@ -7,23 +7,24 @@ use rstar::{AABB, PointDistance, RTree, RTreeObject};
 // Constants
 const MAX_LINK_RANGE_KM: f64 = 150.0;
 
-/// Cost of a transition involving an Unknown node (wildcard).
-const UNKNOWN_LINK_COST: f64 = 8.0;
+/// Cost for staying in the Unknown state (Unknown -> Unknown).
+/// This is the "base" penalty for missing information.
+const COST_TRANSITION_UNKNOWN_TO_UNKNOWN: f64 = 8.0;
 
-/// Tiny penalty reduction to favor transitions *into* a Known node from an Unknown state.
-/// This ensures that if we have a choice between staying Unknown (U->U) or snapping to a Known node (U->K),
-/// we prefer the Known node (Recovery).
-const EPSILON_RECOVERY: f64 = 1.0e-6;
+/// Cost for recovering from the Unknown state to a Known node (Unknown -> Known).
+/// Slightly cheaper than staying Unknown, to encourage the path to "snap back"
+/// to the known graph as soon as a valid node is observed.
+const COST_TRANSITION_UNKNOWN_TO_KNOWN: f64 = 8.0 - 1.0e-6;
 
-/// Slightly larger penalty reduction to favor transitions *from* a Known node to an Unknown state.
-/// This ensures that if we have a disconnected link A->B, we prefer "Known(A) -> Unknown" (path broken after A)
-/// over "Unknown -> Known(B)" (path broken before B). We trust the source.
-const EPSILON_DROPOFF: f64 = 2.0e-6;
+/// Cost for entering the Unknown state from a Known node (Known -> Unknown).
+/// Slightly cheaper than recovery, to favor "trusting the source" (Known start)
+/// in disconnected scenarios.
+const COST_TRANSITION_KNOWN_TO_UNKNOWN: f64 = 8.0 - 2.0e-6;
 
-/// Bonus (negative cost) applied to Known nodes at the start of the path (Step 0).
-/// This ensures that if a path could start at a Known node or an Unknown wildcard,
-/// we overwhelmingly prefer the Known node (Trust Database).
-const KNOWN_START_BONUS: f64 = 0.1;
+/// Initial cost for Known nodes at the start of the path (Step 0).
+/// A negative cost acts as a bonus, ensuring we overwhelmingly prefer starting
+/// with a Known node over an Unknown wildcard if both are options.
+const COST_START_KNOWN: f64 = -0.1;
 
 /// A wrapper around a repeater index that can be stored in the R-Tree.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -159,7 +160,7 @@ impl NetworkGraph {
         // Initialize Known nodes matching the first prefix
         // Give a small bonus to prefer starting with a Known node over Unknown.
         for &node_idx in &self.nodes_by_prefix[first_obs as usize] {
-            prev_costs[node_idx] = -KNOWN_START_BONUS;
+            prev_costs[node_idx] = COST_START_KNOWN;
         }
 
         // Initialize Unknown state
@@ -202,9 +203,7 @@ impl NetworkGraph {
                     }
 
                     // 2. Transition: Known(prev) -> Unknown
-                    // Cost is UNKNOWN_LINK_COST - epsilon.
-                    // Prefer entering unknown over anything else involving unknowns.
-                    let unknown_cost = prev_cost + UNKNOWN_LINK_COST - EPSILON_DROPOFF;
+                    let unknown_cost = prev_cost + COST_TRANSITION_KNOWN_TO_UNKNOWN;
                     if unknown_cost < curr_costs[unknown_state_idx] {
                         curr_costs[unknown_state_idx] = unknown_cost;
                         backpointers[t][unknown_state_idx] = Some(prev_idx);
@@ -214,10 +213,8 @@ impl NetworkGraph {
                     // Previous was Unknown
                     // 3. Transition: Unknown -> Known(curr)
                     // We allow transition to ANY node matching the observation.
-                    // Cost is UNKNOWN_LINK_COST - epsilon.
-                    // Prefer exiting unknown over staying in unknown.
                     for &curr_idx in &self.nodes_by_prefix[obs as usize] {
-                        let total_c = prev_cost + UNKNOWN_LINK_COST - EPSILON_RECOVERY;
+                        let total_c = prev_cost + COST_TRANSITION_UNKNOWN_TO_KNOWN;
                         if total_c < curr_costs[curr_idx] {
                             curr_costs[curr_idx] = total_c;
                             backpointers[t][curr_idx] = Some(prev_idx);
@@ -226,7 +223,7 @@ impl NetworkGraph {
                     }
 
                     // 4. Transition: Unknown -> Unknown
-                    let unknown_unknown_cost = prev_cost + UNKNOWN_LINK_COST;
+                    let unknown_unknown_cost = prev_cost + COST_TRANSITION_UNKNOWN_TO_UNKNOWN;
                     if unknown_unknown_cost < curr_costs[unknown_state_idx] {
                         curr_costs[unknown_state_idx] = unknown_unknown_cost;
                         backpointers[t][unknown_state_idx] = Some(prev_idx);
