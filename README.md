@@ -56,7 +56,7 @@ By finding the **Viterbi Path** (the sequence of nodes that minimizes total path
 ### Step 3.3: Topographic Refinement (SRTM Integration)
 **Goal:** Use real terrain data to penalize "impossible" links through mountains or ridges.
 * **Logic:** Integrate SRTM (30m) `.hgt` tile parsing.
-* **Setup** a main function that loads node locations and messages from CSV files, and terrain from SRTM, pre-calculates edge costs/probabilities for each node (sparse, within a plausible range only) and runs the viterbi for each message to dump a full reconstructed path to disk for each message in a CSV file. 
+* **Setup** a main function that loads node locations and messages from CSV files, and terrain from SRTM, pre-calculates edge costs/probabilities for each node (sparse, within a plausible range only) and runs the viterbi for each message to dump a full reconstructed path to disk for each message in a CSV file.
 
 ### Step 4: Clustering & Promotion (Map Generation)
 **Goal:** Finalize the connectivity map and estimate missing node locations.
@@ -65,7 +65,7 @@ By finding the **Viterbi Path** (the sequence of nodes that minimizes total path
     * **Pass 2: Terrain-Aware Refinement (Reachability Heatmap).** For each cluster, generate a high-resolution search grid (30m steps) around the centroid.
     * **Scoring:** Evaluate each grid point against the project's physics model. A point receives a score based on the number of "Witness Neighbors" (the A and B nodes from Pass 1) it can validly reach (using `physics::link_cost` with a feasibility threshold).
     * **Selection & Disambiguation:** Identify all grid cells that share the maximum "Reachability Intersection" score. Group these contiguous cells into **Connected Components** (blobs). Calculate the **Center of Mass** (geometric centroid) for each component. Instead of picking a single winner, **store all distinct components** as potential candidates. Each candidate will include metadata: **Area Size** (sqm) and **Mean Link Cost** (proxy for RSSI) to allow users to make an informed decision.
-* **Final Output:** Generate a **GraphML/GeoJSON map** of the network, showing:
-    1. Confirmed links between known nodes (weighted by frequency).
-    2. Estimated locations of "Discovered" repeaters.
-    3. Confidence scores for each edge based on total message volume.
+* **Final Output:** Generate an additional JSON output file containing:
+*   * All inferred links between nodes, including statistics about how often that edge has been used to pass a message.
+    * All nodes and how often that node has been used to relay a message.
+    * All the inferred missing nodes, and their candidate locations and statistics.
