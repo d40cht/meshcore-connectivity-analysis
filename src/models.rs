@@ -18,3 +18,12 @@ impl Repeater {
         u8::from_str_radix(&clean_id[0..2], 16).unwrap_or(0)
     }
 }
+
+/// Represents a node in the reconstructed path.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub enum PathNode {
+    /// A known repeater from the database (index into the nodes list).
+    Known(usize),
+    /// An unknown repeater, identified only by its 1-byte prefix.
+    Unknown(u8),
+}

@@ -40,7 +40,13 @@ pub fn earth_bulge(distance_km: f64) -> f64 {
 /// For this simulation:
 /// - Max realistic range: ~100km
 /// - Antenna height assumption: ~30m. If bulge > 30m, probability drops sharply.
-pub fn link_cost(lat1: f64, lon1: f64, lat2: f64, lon2: f64, terrain: Option<&crate::terrain::TerrainMap>) -> f64 {
+pub fn link_cost(
+    lat1: f64,
+    lon1: f64,
+    lat2: f64,
+    lon2: f64,
+    terrain: Option<&crate::terrain::TerrainMap>,
+) -> f64 {
     let dist_km = haversine_distance(lat1, lon1, lat2, lon2);
 
     // Terrain Check

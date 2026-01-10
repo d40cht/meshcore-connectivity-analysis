@@ -19,23 +19,15 @@ impl TerrainMap {
     /// * `center_lat`, `center_lon`: The center of the map.
     /// * `width_km`, `height_km`: Total size of the area in km.
     /// * `resolution_m`: Approximate resolution of each grid cell in meters (e.g., 30.0).
-    pub fn new_random(center_lat: f64, center_lon: f64, width_km: f64, height_km: f64, resolution_m: f64) -> Self {
-        let km_per_deg_lat = 111.0;
-        let km_per_deg_lon = 111.0 * center_lat.to_radians().cos();
-
-        let height_deg = height_km / km_per_deg_lat;
-        let width_deg = width_km / km_per_deg_lon;
-
-        let min_lat = center_lat - height_deg / 2.0;
-        let max_lat = center_lat + height_deg / 2.0;
-        let min_lon = center_lon - width_deg / 2.0;
-        let max_lon = center_lon + width_deg / 2.0;
-
-        let res_deg_lat = (resolution_m / 1000.0) / km_per_deg_lat;
-
-        // We use a square grid in terms of samples, but derived from meters
-        let rows = (height_km * 1000.0 / resolution_m).ceil() as usize;
-        let cols = (width_km * 1000.0 / resolution_m).ceil() as usize;
+    pub fn new_random(
+        center_lat: f64,
+        center_lon: f64,
+        width_km: f64,
+        height_km: f64,
+        resolution_m: f64,
+    ) -> Self {
+        let (min_lat, max_lat, min_lon, max_lon, res_deg_lat, rows, cols) =
+            Self::calc_bounds(center_lat, center_lon, width_km, height_km, resolution_m);
 
         let mut rng = StdRng::seed_from_u64(12345);
         let mut data = vec![0.0; rows * cols];
@@ -53,9 +45,9 @@ impl TerrainMap {
         // some "smooth" noise by combining sine waves with random phases.
         // This is not strictly "pink noise" in the DSP sense but gives topographic hills.
 
-        let random_phases: Vec<(f64, f64)> = (0..octaves * 4).map(|_| {
-            (rng.random_range(0.0..100.0), rng.random_range(0.0..100.0))
-        }).collect();
+        let random_phases: Vec<(f64, f64)> = (0..octaves * 4)
+            .map(|_| (rng.random_range(0.0..100.0), rng.random_range(0.0..100.0)))
+            .collect();
 
         for r in 0..rows {
             for c in 0..cols {
@@ -71,17 +63,16 @@ impl TerrainMap {
                     let phase_y = random_phases[i].1;
 
                     // Simple superposition of sine waves
-                    elevation += amp * (
-                        (x * freq + phase_x).sin() *
-                        (y * freq + phase_y).cos()
-                    );
+                    elevation += amp * ((x * freq + phase_x).sin() * (y * freq + phase_y).cos());
 
                     amp *= persistence;
                     freq *= 2.0;
                 }
 
                 // Clamp to non-negative
-                if elevation < 0.0 { elevation = 0.0; }
+                if elevation < 0.0 {
+                    elevation = 0.0;
+                }
 
                 data[r * cols + c] = elevation;
             }
@@ -97,6 +88,66 @@ impl TerrainMap {
             height: rows,
             data,
         }
+    }
+
+    /// Creates a new flat TerrainMap (all elevation 0.0).
+    pub fn new_flat(
+        center_lat: f64,
+        center_lon: f64,
+        width_km: f64,
+        height_km: f64,
+        resolution_m: f64,
+    ) -> Self {
+        let (min_lat, max_lat, min_lon, max_lon, res_deg_lat, rows, cols) =
+            Self::calc_bounds(center_lat, center_lon, width_km, height_km, resolution_m);
+
+        let data = vec![0.0; rows * cols];
+
+        TerrainMap {
+            min_lat,
+            min_lon,
+            max_lat,
+            max_lon,
+            resolution_deg: res_deg_lat,
+            width: cols,
+            height: rows,
+            data,
+        }
+    }
+
+    fn calc_bounds(
+        center_lat: f64,
+        center_lon: f64,
+        width_km: f64,
+        height_km: f64,
+        resolution_m: f64,
+    ) -> (f64, f64, f64, f64, f64, usize, usize) {
+        let km_per_deg_lat = 111.0;
+        let km_per_deg_lon = 111.0 * center_lat.to_radians().cos();
+
+        let height_deg = height_km / km_per_deg_lat;
+        let width_deg = width_km / km_per_deg_lon;
+
+        let min_lat = center_lat - height_deg / 2.0;
+        let max_lat = center_lat + height_deg / 2.0;
+        let min_lon = center_lon - width_deg / 2.0;
+        let max_lon = center_lon + width_deg / 2.0;
+
+        let res_deg_lat = (resolution_m / 1000.0) / km_per_deg_lat;
+
+        // We use a square grid in terms of samples, but derived from meters
+        let rows = (height_km * 1000.0 / resolution_m).ceil() as usize;
+        let cols = (width_km * 1000.0 / resolution_m).ceil() as usize;
+
+        (
+            min_lat,
+            max_lat,
+            min_lon,
+            max_lon,
+            res_deg_lat,
+            rows,
+            cols,
+        )
     }
 
     /// Gets the elevation at a specific latitude and longitude using bilinear interpolation.
@@ -137,15 +188,27 @@ impl TerrainMap {
     /// Returns false if BLOCKED.
     ///
     /// * `h1_m`, `h2_m`: Antenna heights in meters (added to terrain elevation).
-    pub fn check_line_of_sight(&self, lat1: f64, lon1: f64, h1_m: f64, lat2: f64, lon2: f64, h2_m: f64) -> bool {
+    pub fn check_line_of_sight(
+        &self,
+        lat1: f64,
+        lon1: f64,
+        h1_m: f64,
+        lat2: f64,
+        lon2: f64,
+        h2_m: f64,
+    ) -> bool {
         // TODO: Add Fresnel zone calculation for more realistic physics.
         // Currently implements simple geometric line-of-sight.
 
         let dist_km = crate::physics::haversine_distance(lat1, lon1, lat2, lon2);
-        if dist_km == 0.0 { return true; }
+        if dist_km == 0.0 {
+            return true;
+        }
 
         let steps = (dist_km * 1000.0 / 30.0).ceil() as usize; // Sample every ~30m
-        if steps < 2 { return true; }
+        if steps < 2 {
+            return true;
+        }
 
         let start_elev = self.get_elevation(lat1, lon1);
         let end_elev = self.get_elevation(lat2, lon2);
