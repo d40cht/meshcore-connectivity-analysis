@@ -63,13 +63,16 @@ pub fn find_path(nodes: &[Repeater], start_idx: usize, end_idx: usize) -> Option
             }
 
             let current_node = &nodes[node_idx];
-            let edge_cost = link_cost(
+            let edge_cost_res = link_cost(
                 current_node.lat,
                 current_node.lon,
                 neighbor.lat,
                 neighbor.lon,
                 None,
             );
+
+            // Treat error as infinite cost
+            let edge_cost = edge_cost_res.unwrap_or(f64::INFINITY);
 
             if edge_cost.is_infinite() || edge_cost > 500.0 {
                 continue; // Unreachable

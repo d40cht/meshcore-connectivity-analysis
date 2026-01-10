@@ -101,15 +101,18 @@ impl NetworkGraph {
                     continue;
                 }
                 let neighbor_node = &nodes[j];
-                let cost = link_cost(
+                let cost_res = link_cost(
                     node.lat,
                     node.lon,
                     neighbor_node.lat,
                     neighbor_node.lon,
                     terrain,
                 );
-                 if cost.is_finite() && cost < MAX_FEASIBLE_LINK_COST {
-                    adjacency[i].push((j, cost));
+                // If calculation failed (e.g. missing terrain), treat as blocked
+                if let Ok(cost) = cost_res {
+                    if cost.is_finite() && cost < MAX_FEASIBLE_LINK_COST {
+                        adjacency[i].push((j, cost));
+                    }
                 }
             }
         }

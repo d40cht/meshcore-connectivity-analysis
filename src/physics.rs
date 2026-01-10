@@ -1,4 +1,5 @@
 const EARTH_RADIUS_KM: f64 = 6371.0;
+use anyhow::Result;
 
 /// Calculates the Haversine distance between two points in km.
 pub fn haversine_distance(lat1: f64, lon1: f64, lat2: f64, lon2: f64) -> f64 {
@@ -46,27 +47,32 @@ pub fn link_cost(
     lat2: f64,
     lon2: f64,
     terrain: Option<&crate::terrain::TerrainMap>,
-) -> f64 {
+) -> Result<f64> {
     let dist_km = haversine_distance(lat1, lon1, lat2, lon2);
 
     // Terrain Check
     if let Some(map) = terrain {
         // Assume 30m antenna height for both
-        if !map.check_line_of_sight(lat1, lon1, 30.0, lat2, lon2, 30.0) {
-            // Blocked by terrain!
-            // Add a massive penalty. e.g. +30.0 in log-space (e^-30 is tiny)
-            // Existing max cost is around 1000.0 (from 1e-10).
-            // Let's return a very high cost that isn't INFINITY but effectively rules it out
-            // unless there are NO other options.
-            // But if it's blocked, it's physically impossible in this model.
-            // Let's add 50.0 to the calculated cost or just return High.
-            return 2000.0;
+        match map.check_line_of_sight(lat1, lon1, 30.0, lat2, lon2, 30.0) {
+            Ok(is_clear) => {
+                 if !is_clear {
+                    // Blocked by terrain!
+                    // Return a very high cost that isn't INFINITY but effectively rules it out
+                    return Ok(2000.0);
+                 }
+            },
+            Err(e) => {
+                // Terrain data missing or error.
+                // Treat as infeasible/error as requested.
+                // Returning error propagates to graph building which will skip this link (and maybe warn).
+                return Err(e);
+            }
         }
     }
 
     // Hard cutoff for performance/reality
     if dist_km > 150.0 {
-        return f64::INFINITY;
+        return Ok(f64::INFINITY);
     }
 
     let bulge_m = earth_bulge(dist_km);
@@ -84,10 +90,10 @@ pub fn link_cost(
 
     // Avoid log(0)
     if combined_prob < 1e-10 {
-        return 1000.0; // Very high cost
+        return Ok(1000.0); // Very high cost
     }
 
-    -combined_prob.ln()
+    Ok(-combined_prob.ln())
 }
 
 #[cfg(test)]
@@ -112,14 +118,14 @@ mod tests {
     #[test]
     fn test_link_cost() {
         // Short distance -> Low cost
-        let c_short = link_cost(51.50, 0.0, 51.51, 0.0, None); // ~1km
+        let c_short = link_cost(51.50, 0.0, 51.51, 0.0, None).unwrap(); // ~1km
         // Long distance -> High cost
-        let c_long = link_cost(51.50, 0.0, 52.50, 0.0, None); // ~111km
+        let c_long = link_cost(51.50, 0.0, 52.50, 0.0, None).unwrap(); // ~111km
 
         assert!(c_short < c_long);
 
         // Very long -> Infinity (or very high)
-        let c_very_long = link_cost(51.50, 0.0, 55.00, 0.0, None); // ~300km
+        let c_very_long = link_cost(51.50, 0.0, 55.00, 0.0, None).unwrap(); // ~300km
         assert!(c_very_long == f64::INFINITY || c_very_long > 500.0);
     }
 }
