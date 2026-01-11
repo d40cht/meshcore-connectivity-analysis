@@ -203,3 +203,46 @@ fn region_query(points: &[LinkMidpoint], center_idx: usize, epsilon: f64) -> Vec
     }
     neighbors
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_dbscan_clustering_basic() {
+        // Cluster 1: (0,0), (0, 0.1)
+        // Cluster 2: (10, 10)
+        let points = vec![
+            LinkMidpoint { lat: 0.0, lon: 0.0 },
+            LinkMidpoint { lat: 0.0, lon: 0.1 }, // ~11km away
+            LinkMidpoint { lat: 10.0, lon: 10.0 }, // far away
+        ];
+
+        let epsilon = 20.0;
+        let min_points = 1;
+
+        let clusters = dbscan(&points, epsilon, min_points);
+        assert_eq!(clusters.len(), 2);
+    }
+
+    #[test]
+    fn test_dbscan_noise_filtering() {
+        // With min_points = 2, isolated points should be noise
+        // P1, P2 are close. P3 is isolated.
+        let points = vec![
+            LinkMidpoint { lat: 0.0, lon: 0.0 },
+            LinkMidpoint { lat: 0.0, lon: 0.0001 }, // very close
+            LinkMidpoint { lat: 10.0, lon: 10.0 }, // far away
+        ];
+
+        let epsilon = 1.0;
+        let min_points = 2;
+
+        let clusters = dbscan(&points, epsilon, min_points);
+
+        // Should find 1 cluster (P1, P2)
+        // P3 should be ignored (noise)
+        assert_eq!(clusters.len(), 1);
+        assert_eq!(clusters[0].len(), 2);
+    }
+}
