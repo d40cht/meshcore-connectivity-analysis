@@ -91,6 +91,7 @@ pub fn localize_unknowns(
 }
 
 /// Simple connected-components clustering based on distance.
+// TODO: Upgrade to DBSCAN or similar density-based clustering for better outlier rejection.
 fn cluster_points(points: &[Observation], threshold_km: f64) -> Vec<Vec<&Observation>> {
     let mut visited = vec![false; points.len()];
     let mut clusters = Vec::new();
