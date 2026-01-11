@@ -3,8 +3,15 @@ use crate::physics::haversine_distance;
 use serde::Serialize;
 use std::collections::HashMap;
 
-const CLUSTER_THRESHOLD_KM: f64 = 50.0;
+const DBSCAN_EPSILON_KM: f64 = 50.0;
+const DBSCAN_MIN_POINTS: usize = 1;
 
+/// Represents an inferred unknown repeater location.
+///
+/// **Note:** The `lat` and `lon` fields are currently calculated as the centroid
+/// of all `LinkMidpoint`s in the cluster. This is a first-order approximation
+/// and may not be highly accurate, especially for geometries where the
+/// repeater is not near the path midpoint.
 #[derive(Debug, Serialize, Clone, PartialEq)]
 pub struct InferredRepeater {
     pub prefix: String,
@@ -13,8 +20,12 @@ pub struct InferredRepeater {
     pub observation_count: usize,
 }
 
-#[derive(Debug)]
-struct Observation {
+/// Represents the geometric midpoint between two Known nodes in a
+/// `Known -> Unknown -> Known` path sequence.
+///
+/// This serves as a rough proxy for the location of the Unknown node.
+#[derive(Debug, Clone)]
+struct LinkMidpoint {
     lat: f64,
     lon: f64,
 }
@@ -25,7 +36,7 @@ pub fn localize_unknowns(
     paths: &[Vec<PathNode>],
     known_nodes: &[Repeater],
 ) -> Vec<InferredRepeater> {
-    let mut observations_by_prefix: HashMap<u8, Vec<Observation>> = HashMap::new();
+    let mut observations_by_prefix: HashMap<u8, Vec<LinkMidpoint>> = HashMap::new();
 
     // 1. Extract Midpoints from K->U->K triplets
     for path in paths {
@@ -48,7 +59,7 @@ pub fn localize_unknowns(
                 observations_by_prefix
                     .entry(*u_prefix)
                     .or_default()
-                    .push(Observation {
+                    .push(LinkMidpoint {
                         lat: mid_lat,
                         lon: mid_lon,
                     });
@@ -60,7 +71,7 @@ pub fn localize_unknowns(
 
     // 2. Cluster observations for each prefix
     for (prefix, obs_list) in observations_by_prefix {
-        let clusters = cluster_points(&obs_list, CLUSTER_THRESHOLD_KM);
+        let clusters = dbscan(&obs_list, DBSCAN_EPSILON_KM, DBSCAN_MIN_POINTS);
 
         for cluster in clusters {
             if cluster.is_empty() {
@@ -90,38 +101,105 @@ pub fn localize_unknowns(
     results
 }
 
-/// Simple connected-components clustering based on distance.
-// TODO: Upgrade to DBSCAN or similar density-based clustering for better outlier rejection.
-fn cluster_points(points: &[Observation], threshold_km: f64) -> Vec<Vec<&Observation>> {
-    let mut visited = vec![false; points.len()];
+#[derive(Clone, Copy, PartialEq)]
+enum PointStatus {
+    Unvisited,
+    Visited,
+    Noise, // Not used if min_points=1, but good for completeness
+}
+
+/// DBSCAN Clustering Implementation
+fn dbscan(points: &[LinkMidpoint], epsilon: f64, min_points: usize) -> Vec<Vec<&LinkMidpoint>> {
+    let mut status = vec![PointStatus::Unvisited; points.len()];
     let mut clusters = Vec::new();
 
     for i in 0..points.len() {
-        if visited[i] {
+        if status[i] != PointStatus::Unvisited {
             continue;
         }
 
-        let mut current_cluster = Vec::new();
-        let mut stack = vec![i];
-        visited[i] = true;
+        status[i] = PointStatus::Visited;
+        let neighbors = region_query(points, i, epsilon);
 
-        while let Some(curr_idx) = stack.pop() {
-            let p_curr = &points[curr_idx];
-            current_cluster.push(p_curr);
-
-            for j in 0..points.len() {
-                if !visited[j] {
-                    let p_next = &points[j];
-                    let dist = haversine_distance(p_curr.lat, p_curr.lon, p_next.lat, p_next.lon);
-                    if dist <= threshold_km {
-                        visited[j] = true;
-                        stack.push(j);
-                    }
-                }
-            }
+        if neighbors.len() < min_points {
+            status[i] = PointStatus::Noise;
+        } else {
+            let mut current_cluster = Vec::new();
+            expand_cluster(
+                points,
+                &mut status,
+                &mut current_cluster,
+                i,
+                neighbors,
+                epsilon,
+                min_points,
+            );
+            clusters.push(current_cluster);
         }
-        clusters.push(current_cluster);
     }
 
     clusters
+}
+
+fn expand_cluster<'a>(
+    points: &'a [LinkMidpoint],
+    status: &mut [PointStatus],
+    cluster: &mut Vec<&'a LinkMidpoint>,
+    seed_idx: usize,
+    mut seeds: Vec<usize>,
+    epsilon: f64,
+    min_points: usize,
+) {
+    cluster.push(&points[seed_idx]);
+
+    // Note: In a standard DBSCAN, we iterate through seeds.
+    // Since we are modifying seeds (pushing to it), we use a while loop/index approach.
+    let mut i = 0;
+    while i < seeds.len() {
+        let curr_idx = seeds[i];
+        i += 1;
+
+        if curr_idx == seed_idx {
+            continue; // Already added seed
+        }
+
+        match status[curr_idx] {
+            PointStatus::Noise => {
+                // Change noise to border point
+                status[curr_idx] = PointStatus::Visited;
+                cluster.push(&points[curr_idx]);
+            }
+            PointStatus::Unvisited => {
+                status[curr_idx] = PointStatus::Visited;
+                cluster.push(&points[curr_idx]);
+                let neighbors = region_query(points, curr_idx, epsilon);
+                if neighbors.len() >= min_points {
+                    // Extend the cluster
+                    for n in neighbors {
+                        if !seeds.contains(&n) { // Avoid dupes in processing queue
+                             seeds.push(n);
+                        }
+                    }
+                }
+            }
+            PointStatus::Visited => {
+                // Already processed, do nothing (assumed already in a cluster or noise)
+                // However, standard DBSCAN might add it if it was noise.
+                // Our implementation handles noise above.
+            }
+        }
+    }
+}
+
+fn region_query(points: &[LinkMidpoint], center_idx: usize, epsilon: f64) -> Vec<usize> {
+    let p_center = &points[center_idx];
+    let mut neighbors = Vec::new();
+    for (i, p) in points.iter().enumerate() {
+        // Distance to self is 0, so it's included
+        let dist = haversine_distance(p_center.lat, p_center.lon, p.lat, p.lon);
+        if dist <= epsilon {
+            neighbors.push(i);
+        }
+    }
+    neighbors
 }
